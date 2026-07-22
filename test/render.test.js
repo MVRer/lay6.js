@@ -114,10 +114,13 @@ test("hitTest finds tracks by segment distance and respects visibility", () => {
   assert.ok(!none || none.layer !== 1, "hidden layer is not hit");
 });
 
-test("SVG export: mirrored view flips the x scale", () => {
+test("SVG export: base Y is inverted; mirror flips X too", () => {
   const board = demoDoc().boards[0];
-  const svg = Lay6Render.renderToSVG(board, { scale: 10, tx: 500, ty: 0, mirror: true }, 800, 600, ALL_VISIBLE);
-  assert.match(svg, /scale\(-10 10\)/);
+  // Y is always negated (board Y up -> screen Y down); mirror negates X as well.
+  const plain = Lay6Render.renderToSVG(board, { scale: 10, tx: 0, ty: 0, mirror: false }, 800, 600, ALL_VISIBLE);
+  assert.match(plain, /scale\(10 -10\)/);
+  const mirrored = Lay6Render.renderToSVG(board, { scale: 10, tx: 500, ty: 0, mirror: true }, 800, 600, ALL_VISIBLE);
+  assert.match(mirrored, /scale\(-10 -10\)/);
 });
 
 test("SVG export applies a rotation transform when the view is rotated", () => {
@@ -159,7 +162,8 @@ test("multi-line text emits one tspan per line; mirror keeps it readable", () =>
   const plain = Lay6Render.renderToSVG(board, VIEW, 400, 400, ALL_VISIBLE);
   assert.equal((plain.match(/<tspan/g) || []).length, 2, "two lines => two tspans");
   const mirrored = Lay6Render.renderToSVG(board, { scale: 5, tx: 0, ty: 0, mirror: true }, 400, 400, ALL_VISIBLE);
-  assert.match(mirrored, /<text[^>]*scale\(-1 1\)/, "mirror counter-flips the glyphs");
+  // Y is always counter-flipped; mirror adds the X counter-flip => scale(-1 -1).
+  assert.match(mirrored, /<text[^>]*scale\(-1 -1\)/, "mirror counter-flips the glyphs");
 });
 
 test("unknown object type with a closed filled outline is filled, not a hairline", () => {

@@ -50,10 +50,11 @@ var Lay6Render = (function () {
   function mm(u) {
     return u / 10000;
   }
-  // File y coordinates run downward from the board's bottom-left origin,
-  // so board content spans -size_y..0. Geometry stays in file space; the
-  // view transform shifts everything down by the board height (view.oy).
-  // A sign flip here would mirror glyph strokes vertically.
+  // Geometry stays in raw file space here (board content spans -size_y..0);
+  // the actual up/down orientation is handled once in applyView, which
+  // negates the Y scale so the board renders right-side up (file Y points
+  // up, canvas Y points down). Keeping fy a plain pass-through means path
+  // data is identical between the canvas and SVG renderers.
   function fy(u) {
     return u / 10000;
   }
@@ -284,11 +285,17 @@ var Lay6Render = (function () {
   var svgMirror = false; // set per renderToSVG call (SVG has no live view state)
   var MIN_STROKE_PX = 1.1; // thinnest a trace/glyph is allowed to render
 
+  // The board's file Y axis points up (origin bottom-left), while the canvas
+  // Y axis points down, so the whole scene is drawn with a negated Y scale to
+  // render boards right-side up. Font-rendered text is counter-flipped in
+  // drawText so labels stay upright; glyph-stroke text (the real-file case)
+  // is geometry and flips with everything else, which is what makes it read
+  // correctly.
   function applyView(ctx, view) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.translate(view.tx, view.ty);
     if (view.rot) ctx.rotate((view.rot * Math.PI) / 180);
-    ctx.scale(view.mirror ? -view.scale : view.scale, view.scale);
+    ctx.scale(view.mirror ? -view.scale : view.scale, -view.scale);
     ctx.translate(0, view.oy || 0);
     viewScale = view.scale || 1;
     viewMirror = !!view.mirror;
@@ -332,8 +339,9 @@ var Lay6Render = (function () {
     ctx.save();
     ctx.translate(mm(o.x), fy(o.y));
     ctx.rotate(rad(-deg(o.rotation)));
-    // The whole scene is x-flipped in mirror view; counter-flip here so
-    // labels read forwards instead of backwards.
+    // The scene has a negated Y scale (and X too in mirror view); counter-flip
+    // here so a font-rendered label stays upright and forward-reading.
+    ctx.scale(1, -1);
     if (viewMirror) ctx.scale(-1, 1);
     if (o.flipVertical) ctx.scale(-1, 1);
     ctx.fillStyle = color;
@@ -886,11 +894,13 @@ var Lay6Render = (function () {
       case TYPE.TEXT:
         if (!textShouldDraw(o)) return "";
         var h = Math.max(mm(o.out), 0.4);
-        // Counter-flip glyphs in mirror view so labels stay readable; a flip
-        // plus a mirror cancel out, matching the canvas.
-        var flip = (svgMirror ? 1 : 0) ^ (o.flipVertical ? 1 : 0);
+        // The group transform negates Y (and X in mirror view); counter-flip
+        // the glyphs so a font label stays upright and forward-reading. The Y
+        // counter-flip is always applied; X only when mirrored (flipVertical
+        // toggles it further).
+        var flipX = (svgMirror ? 1 : 0) ^ (o.flipVertical ? 1 : 0);
         var tf = "translate(" + fmt(mm(o.x)) + " " + fmt(fy(o.y)) + ") rotate(" + fmt(-deg(o.rotation)) + ")" +
-          (flip ? " scale(-1 1)" : "");
+          " scale(" + (flipX ? "-1" : "1") + " -1)";
         var lines = String(o.text).split(/\r\n|\r|\n/);
         var spans = lines.map(function (ln, i) {
           return '<tspan x="0" dy="' + (i === 0 ? "0" : fmt(h * 1.2)) + '">' + esc(ln) + "</tspan>";
@@ -947,7 +957,7 @@ var Lay6Render = (function () {
     parts.push('<rect width="100%" height="100%" fill="' + COLORS.bg + '"/>');
     var tf = "translate(" + fmt(view.tx) + " " + fmt(view.ty) + ")" +
       (view.rot ? " rotate(" + fmt(view.rot) + ")" : "") + " scale(" +
-      fmt(view.mirror ? -view.scale : view.scale) + " " + fmt(view.scale) +
+      fmt(view.mirror ? -view.scale : view.scale) + " " + fmt(-view.scale) +
       ") translate(0 " + fmt(mm(board.sizeY)) + ")";
     parts.push('<g transform="' + tf + '">');
     parts.push('<rect x="0" y="' + fmt(-mm(board.sizeY)) + '" width="' + fmt(mm(board.sizeX)) +
