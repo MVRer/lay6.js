@@ -114,10 +114,20 @@
       showBanner("“" + fileName + "”: " + msg);
       return;
     }
-    Lay6.decodeStrings(doc, els.encoding.value);
+    // parse() already decoded with an auto-detected codepage. Honour that
+    // (so Cyrillic boards are readable on load), and surface the choice by
+    // syncing the encoding selector to it.
+    var detected = doc.detectedEncoding || els.encoding.value;
+    var autoSwitched = detected !== els.encoding.value;
+    if (autoSwitched) els.encoding.value = detected;
+    if (doc.encoding !== detected) Lay6.decodeStrings(doc, detected);
     if (doc.boards.length === 0) {
       showBanner("“" + fileName + "” parsed, but it contains no boards.", "warn");
       return;
+    }
+    if (autoSwitched && detected === "windows-1251") {
+      showBanner("“" + fileName + "” looks like Cyrillic text — decoded as CP1251. " +
+        "Use the encoding selector if that is wrong.", "info");
     }
     var firstNew = state.tabs.length;
     doc.boards.forEach(function (board, i) {
@@ -262,6 +272,12 @@
     renderDiagnostics();
     els.empty.hidden = !!activeTab();
     var tab = activeTab();
+    // Reflect the active board's (auto-detected) codepage in the selector so
+    // the control never lies about what is on screen.
+    if (tab && tab.doc.encoding) els.encoding.value = tab.doc.encoding;
+    // A tooltip pinned to the previous board would otherwise linger.
+    if (els.tooltip) els.tooltip.hidden = true;
+    els.stHover.textContent = "";
     document.getElementById("btn-mirror").setAttribute("aria-pressed",
       String(!!(tab && tab.view && tab.view.mirror)));
     document.getElementById("btn-grid").setAttribute("aria-pressed",
@@ -810,6 +826,10 @@
     v.mirror = !v.mirror;
     v.tx = screenCX - v.scale * (v.mirror ? -cx : cx);
     document.getElementById("btn-mirror").setAttribute("aria-pressed", String(v.mirror));
+    // Drop any stale hover highlight/tooltip from the pre-mirror geometry.
+    state.hover = null;
+    els.tooltip.hidden = true;
+    els.stHover.textContent = "";
     requestRender();
   }
   document.getElementById("btn-mirror").addEventListener("click", toggleMirror);

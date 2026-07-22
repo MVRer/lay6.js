@@ -1,7 +1,9 @@
-/* Service worker: cache-first so the viewer keeps working offline. */
+/* Service worker: network-first with a cache fallback, so the viewer always
+ * picks up new code when online yet still works fully offline. Bump CACHE on
+ * every asset change to evict the previous generation. */
 "use strict";
 
-var CACHE = "lay6js-v1";
+var CACHE = "lay6js-v2";
 var ASSETS = [
   "./",
   "index.html",
@@ -37,15 +39,17 @@ self.addEventListener("activate", function (e) {
 
 self.addEventListener("fetch", function (e) {
   if (e.request.method !== "GET") return;
+  // Network-first: serve fresh assets when online, refresh the cache, and
+  // fall back to the cached copy only when the network is unavailable.
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
-      return hit || fetch(e.request).then(function (res) {
+    fetch(e.request).then(function (res) {
+      if (res && res.ok && res.type === "basic") {
         var copy = res.clone();
-        caches.open(CACHE).then(function (c) {
-          c.put(e.request, copy);
-        });
-        return res;
-      });
+        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(e.request, { ignoreSearch: true });
     })
   );
 });

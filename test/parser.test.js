@@ -136,14 +136,55 @@ test("multi fixture: two boards, full consumption, per-board histograms", () => 
   assert.deepEqual(Lay6.histogram(doc.boards[1]), { track: 1, "THT pad": 1 });
 });
 
-test("encoding: re-decode without reparsing fixes Cyrillic names", () => {
+test("encoding: Cyrillic board name is auto-detected as CP1251 on parse", () => {
   const doc = Lay6.parse(fixture("multi.lay6"));
-  const before = doc.boards[1].name; // decoded as windows-1252 by default
-  assert.notEqual(before, "Плата");
-  Lay6.decodeStrings(doc, "windows-1251");
+  assert.equal(doc.detectedEncoding, "windows-1251");
+  assert.equal(doc.encoding, "windows-1251");
+  assert.equal(doc.boards[1].name, "Плата"); // readable straight away, no manual switch
+});
+
+test("encoding: re-decode without reparsing switches codepages both ways", () => {
+  const doc = Lay6.parse(fixture("multi.lay6"));
   assert.equal(doc.boards[1].name, "Плата");
-  Lay6.decodeStrings(doc, "windows-1252");
-  assert.equal(doc.boards[1].name, before);
+  Lay6.decodeStrings(doc, "windows-1252"); // Latin misread => mojibake
+  assert.notEqual(doc.boards[1].name, "Плата");
+  Lay6.decodeStrings(doc, "windows-1251"); // back to Cyrillic
+  assert.equal(doc.boards[1].name, "Плата");
+});
+
+test("encoding: an all-ASCII/Latin board is left as CP1252", () => {
+  const doc = Lay6.parse(fixture("simple.lay6"));
+  assert.equal(doc.detectedEncoding, "windows-1252");
+});
+
+test("encoding: isolated accented-Latin bytes do not trip Cyrillic detection", () => {
+  // "Größe" in CP1252: G r ö(0xF6) ß(0xDF) e — high bytes are isolated among
+  // ASCII letters, unlike Cyrillic where whole words are high bytes.
+  const buf = gen.generate({
+    boards: [{
+      name: [0x47, 0x72, 0xf6, 0xdf, 0x65], sizeX: 10000, sizeY: 10000, objects: [],
+    }],
+    trailer: {},
+  });
+  assert.equal(Lay6.parse(buf).detectedEncoding, "windows-1252");
+});
+
+test("encoding: an accented-Latin-heavy board is not misdetected as Cyrillic", () => {
+  // Several German words with isolated umlauts/ß, plus ASCII refs; high bytes
+  // never dominate any single string, so this must stay CP1252.
+  const w = (s) => Array.from(s, (ch) => ch.charCodeAt(0)); // ANSI byte per char
+  const buf = gen.generate({
+    boards: [{
+      name: w("Gr\xf6\xdfe"), sizeX: 10000, sizeY: 10000, // "Größe"
+      objects: [
+        { type: 7, layer: 2, x: 1000, y: 1000, out: 2000, text: w("K\xfchlk\xf6rper"), children: [] },
+        { type: 7, layer: 2, x: 2000, y: 2000, out: 2000, text: "R1", children: [] },
+        { type: 7, layer: 2, x: 3000, y: 3000, out: 2000, text: w("Netzger\xe4t"), children: [] },
+      ],
+    }],
+    trailer: { project: w("Messf\xfchler") },
+  });
+  assert.equal(Lay6.parse(buf).detectedEncoding, "windows-1252");
 });
 
 test("empty fixture: zero objects still parses to the last byte", () => {

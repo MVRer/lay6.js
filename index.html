@@ -18,8 +18,8 @@
   <p class="privacy" title="Files are read with the browser's FileReader API. There is no server, no upload, no analytics.">Local only &mdash; files never leave your machine</p>
   <div class="toolbar" role="toolbar" aria-label="Viewer controls">
     <button class="btn primary" id="btn-open">Open .lay6&hellip;</button>
-    <button class="btn" id="btn-demo" style="border:1px solid var(--border-strong);border-radius:6px">Demo</button>
-    <select class="btn" id="encoding" title="Codepage for names and text (re-decodes instantly, no reparse)" aria-label="Text encoding" style="border:1px solid var(--border-strong);border-radius:6px">
+    <button class="btn outline" id="btn-demo">Demo</button>
+    <select class="btn outline" id="encoding" title="Codepage for names and text (auto-detected on load; re-decodes instantly, no reparse)" aria-label="Text encoding">
       <option value="windows-1252">CP1252 Latin</option>
       <option value="windows-1251">CP1251 Cyrillic</option>
       <option value="windows-1250">CP1250 Central Eur.</option>
@@ -86,7 +86,7 @@
       <span class="msg"></span>
       <button class="btn" id="banner-close" aria-label="Dismiss message">&times;</button>
     </div>
-    <canvas id="view" tabindex="0" aria-label="PCB board view. Use arrow keys to pan, plus and minus to zoom."></canvas>
+    <canvas id="view" tabindex="0" aria-label="PCB board view. Arrow keys pan; plus and minus zoom; F fits; X mirrors; G toggles the grid; M measures; number keys 1 to 7 toggle layers."></canvas>
     <div id="tooltip" hidden aria-hidden="true">
       <div class="t-title"></div>
       <div class="t-sub" hidden></div>
@@ -95,12 +95,12 @@
       <div class="card">
         <div class="big">Drop a .lay6 file anywhere</div>
         <p>or use Open above. Parsing happens entirely in your browser &mdash;<br>nothing is ever uploaded.</p>
-        <button class="btn" id="btn-demo-2" style="border:1px solid var(--border-strong);border-radius:6px">Load the demo board</button>
+        <button class="btn outline" id="btn-demo-2">Load the demo board</button>
       </div>
     </div>
     <div id="statusbar">
       <span id="st-coords">X: &mdash; Y: &mdash;</span>
-      <span id="st-hover"></span>
+      <span id="st-hover" role="status" aria-live="polite"></span>
       <span id="st-measure" class="measure"></span>
       <span id="st-size" class="right"></span>
       <span id="st-zoom"></span>

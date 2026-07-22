@@ -16,19 +16,36 @@ var Lay6Render = (function () {
   var COLORS = {
     bg: "#0e1013",
     board: "#161a20",
-    hole: "#0e1013",
+    hole: "#0b0d10",
     dimOutside: "rgba(14, 16, 19, 0.62)",
     measure: "#e2688b",
+    // Bright colour used for traces, pads, arcs and outlines — the objects
+    // that must stand out.
     layers: {
-      1: "#4c8dff", // C1 copper top
-      2: "#dde2e9", // S1 silk top
-      3: "#3fa36c", // C2 copper bottom
-      4: "#b3a55e", // S2 silk bottom
-      5: "#bd6b3f", // I1
-      6: "#9c55b0", // I2
-      7: "#d8b13f", // O outline
+      1: "#5b9bff", // C1 copper top
+      2: "#e6eaf0", // S1 silk top
+      3: "#4bbd82", // C2 copper bottom
+      4: "#c9ba6e", // S2 silk bottom
+      5: "#e0824a", // I1
+      6: "#b878cc", // I2
+      7: "#e6bd4a", // O outline
+    },
+    // Muted copper-pour colour, drawn UNDER the bright objects so a filled
+    // zone reads as a background wash and the tracks/pads on it stay legible.
+    // Only copper layers can carry filled zones.
+    pour: {
+      1: "#254a80", // C1 pour
+      3: "#1f5a42", // C2 pour
+      5: "#6e4127", // I1 pour
+      6: "#5a3d66", // I2 pour
     },
   };
+
+  // The wash colour for a filled zone on a given layer; falls back to a
+  // dimmed trace colour when no dedicated pour tone exists.
+  function pourColor(layer) {
+    return COLORS.pour[layer] || COLORS.layers[layer];
+  }
 
   function mm(u) {
     return u / 10000;
@@ -258,11 +275,22 @@ var Lay6Render = (function () {
     }
   }
 
+  // Current view state, tracked at the single applyView choke point so the
+  // low-level drawers can honour the on-screen scale (for a device-pixel
+  // stroke floor) and the mirror flag (to keep text readable) without every
+  // caller threading them through.
+  var viewScale = 1;
+  var viewMirror = false;
+  var svgMirror = false; // set per renderToSVG call (SVG has no live view state)
+  var MIN_STROKE_PX = 1.1; // thinnest a trace/glyph is allowed to render
+
   function applyView(ctx, view) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.translate(view.tx, view.ty);
     ctx.scale(view.mirror ? -view.scale : view.scale, view.scale);
     ctx.translate(0, view.oy || 0);
+    viewScale = view.scale || 1;
+    viewMirror = !!view.mirror;
   }
 
   function fillD(ctx, d, color) {
@@ -270,10 +298,16 @@ var Lay6Render = (function () {
     ctx.fill(new Path2D(d), "evenodd");
   }
 
+  // Keep a line at least MIN_STROKE_PX device pixels wide so hairline copper
+  // and silkscreen glyph strokes stay visible at fit-to-board zoom.
+  function strokeFloor(width) {
+    return Math.max(width, MIN_STROKE_PX / viewScale, 0.02);
+  }
+
   function strokePoly(ctx, o, color, width, closed) {
     if (!o.points || o.points.length === 0) return;
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(width, 0.02);
+    ctx.lineWidth = strokeFloor(width);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -283,20 +317,28 @@ var Lay6Render = (function () {
     ctx.stroke();
   }
 
+  // A text object's glyphs live in child track strokes; drawing the string
+  // too would double-render. Components are the exception: their children are
+  // pads/tracks and o.text is the reference designator, which we DO want.
+  function textShouldDraw(o) {
+    return !!(o.text) && (!(o.children && o.children.length) || !!o.component);
+  }
+
   function drawText(ctx, o, color) {
-    var text = o.text || "";
-    // Real files store the glyph strokes as child track objects, which the
-    // render list already emits; drawing the string too would double-render.
-    if (!text || (o.children && o.children.length)) return;
+    if (!textShouldDraw(o)) return;
+    var lines = String(o.text).split(/\r\n|\r|\n/);
     var h = Math.max(mm(o.out), 0.4);
     ctx.save();
     ctx.translate(mm(o.x), fy(o.y));
     ctx.rotate(rad(-deg(o.rotation)));
+    // The whole scene is x-flipped in mirror view; counter-flip here so
+    // labels read forwards instead of backwards.
+    if (viewMirror) ctx.scale(-1, 1);
     if (o.flipVertical) ctx.scale(-1, 1);
     ctx.fillStyle = color;
     ctx.font = h + "px system-ui, sans-serif";
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(text, 0, 0);
+    for (var i = 0; i < lines.length; i++) ctx.fillText(lines[i], 0, i * h * 1.2);
     ctx.restore();
   }
 
@@ -316,9 +358,12 @@ var Lay6Render = (function () {
         strokePoly(ctx, o, color, mm(o.lineWidth), false);
         break;
       case TYPE.ZONE:
-        if (!o.points || o.points.length < 2) break;
+        if (!o.points || o.points.length < 3) break;
         if (o.fill) {
-          fillD(ctx, polygonD(mapPoints(o.points)), color);
+          // Muted wash so tracks/pads on the pour stay readable; a thin
+          // bright edge keeps the zone boundary legible.
+          fillD(ctx, polygonD(mapPoints(o.points)), pourColor(o.layer));
+          strokePoly(ctx, o, color, Math.max(mm(o.lineWidth), 0.05), true);
         } else {
           strokePoly(ctx, o, color, mm(o.lineWidth), true);
         }
@@ -327,8 +372,23 @@ var Lay6Render = (function () {
         drawText(ctx, o, color);
         break;
       default:
-        if (o.points && o.points.length) strokePoly(ctx, o, color, mm(o.lineWidth), false);
+        // Unknown object type read as a generic polygon: fill it when the
+        // record asks for a fill, otherwise stroke it (closed if the outline
+        // returns to its start) so it never silently disappears.
+        if (o.points && o.points.length >= 3 && o.fill) {
+          fillD(ctx, polygonD(mapPoints(o.points)), color);
+        } else if (o.points && o.points.length) {
+          strokePoly(ctx, o, color, mm(o.lineWidth), pointsClosed(o.points));
+        }
     }
+  }
+
+  // True when a point list's first and last vertices coincide, i.e. it is an
+  // already-closed outline.
+  function pointsClosed(pts) {
+    if (pts.length < 3) return false;
+    var a = pts[0], b = pts[pts.length - 1];
+    return a.x === b.x && a.y === b.y;
   }
 
   // Clearance punch shape for an object sitting on a filled zone.
@@ -815,22 +875,35 @@ var Lay6Render = (function () {
           '" fill="none" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) +
           '" stroke-linecap="round" stroke-linejoin="round"/>';
       case TYPE.ZONE:
-        if (!o.points || o.points.length < 2) return "";
+        if (!o.points || o.points.length < 3) return "";
         var zd = polygonD(mapPoints(o.points));
-        if (o.fill) return '<path d="' + zd + '" fill="' + color + '"/>';
+        if (o.fill) return '<path d="' + zd + '" fill="' + pourColor(o.layer) +
+          '" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.05)) +
+          '" stroke-linejoin="round"/>';
         return '<path d="' + zd + '" fill="none" stroke="' + color +
           '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '" stroke-linejoin="round"/>';
       case TYPE.TEXT:
-        if (!o.text || (o.children && o.children.length)) return "";
+        if (!textShouldDraw(o)) return "";
         var h = Math.max(mm(o.out), 0.4);
+        // Counter-flip glyphs in mirror view so labels stay readable; a flip
+        // plus a mirror cancel out, matching the canvas.
+        var flip = (svgMirror ? 1 : 0) ^ (o.flipVertical ? 1 : 0);
         var tf = "translate(" + fmt(mm(o.x)) + " " + fmt(fy(o.y)) + ") rotate(" + fmt(-deg(o.rotation)) + ")" +
-          (o.flipVertical ? " scale(-1 1)" : "");
+          (flip ? " scale(-1 1)" : "");
+        var lines = String(o.text).split(/\r\n|\r|\n/);
+        var spans = lines.map(function (ln, i) {
+          return '<tspan x="0" dy="' + (i === 0 ? "0" : fmt(h * 1.2)) + '">' + esc(ln) + "</tspan>";
+        }).join("");
         return '<text transform="' + tf + '" font-size="' + fmt(h) +
-          '" font-family="sans-serif" fill="' + color + '">' + esc(o.text) + "</text>";
+          '" font-family="sans-serif" fill="' + color + '">' + spans + "</text>";
       default:
+        if (o.points && o.points.length >= 3 && o.fill) {
+          return '<path d="' + polygonD(mapPoints(o.points)) + '" fill="' + color + '"/>';
+        }
         if (o.points && o.points.length) {
-          return '<path d="' + polylineD(mapPoints(o.points)) +
-            '" fill="none" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '"/>';
+          var dd = pointsClosed(o.points) ? polygonD(mapPoints(o.points)) : polylineD(mapPoints(o.points));
+          return '<path d="' + dd + '" fill="none" stroke="' + color +
+            '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '" stroke-linejoin="round"/>';
         }
         return "";
     }
@@ -865,6 +938,7 @@ var Lay6Render = (function () {
    * as the canvas: pixels, y-down, optional mirror).
    */
   function renderToSVG(board, view, widthPx, heightPx, visible) {
+    svgMirror = !!view.mirror;
     var maskId = 0;
     var parts = [];
     parts.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + widthPx + '" height="' + heightPx +

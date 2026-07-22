@@ -119,3 +119,53 @@ test("SVG export: mirrored view flips the x scale", () => {
   const svg = Lay6Render.renderToSVG(board, { scale: 10, tx: 500, ty: 0, mirror: true }, 800, 600, ALL_VISIBLE);
   assert.match(svg, /scale\(-10 10\)/);
 });
+
+test("filled copper zone renders in the muted pour colour, distinct from traces", () => {
+  const board = demoDoc().boards[0];
+  const svg = Lay6Render.renderToSVG(board, VIEW, 800, 600, ALL_VISIBLE);
+  const trace = Lay6Render.COLORS.layers[1];
+  const pour = Lay6Render.COLORS.pour[1];
+  assert.ok(pour && pour !== trace, "copper pour colour differs from the trace colour");
+  // the filled top-copper zone paints with the pour fill and a bright edge
+  assert.match(svg, new RegExp('fill="' + pour + '" stroke="' + trace + '"'));
+});
+
+test("component reference designator is drawn even though it has children", () => {
+  // The demo's R1 component owns child pads/tracks AND a label; the label
+  // must still render (it is not a glyph-stroke container).
+  const board = demoDoc().boards[0];
+  const svg = Lay6Render.renderToSVG(board, VIEW, 800, 600, ALL_VISIBLE);
+  assert.match(svg, /<text[^>]*>(?:<tspan[^>]*>)?R1/);
+});
+
+test("multi-line text emits one tspan per line; mirror keeps it readable", () => {
+  const buf = gen.generate({
+    boards: [{
+      name: "t", sizeX: 100000, sizeY: 100000,
+      objects: [{ type: 7, layer: 2, x: 10000, y: 50000, out: 20000, text: "AA\nBB", children: [] }],
+    }],
+    trailer: {},
+  });
+  const board = Lay6.parse(buf).boards[0];
+  const plain = Lay6Render.renderToSVG(board, VIEW, 400, 400, ALL_VISIBLE);
+  assert.equal((plain.match(/<tspan/g) || []).length, 2, "two lines => two tspans");
+  const mirrored = Lay6Render.renderToSVG(board, { scale: 5, tx: 0, ty: 0, mirror: true }, 400, 400, ALL_VISIBLE);
+  assert.match(mirrored, /<text[^>]*scale\(-1 1\)/, "mirror counter-flips the glyphs");
+});
+
+test("unknown object type with a closed filled outline is filled, not a hairline", () => {
+  const buf = gen.generate({
+    boards: [{
+      name: "x", sizeX: 100000, sizeY: 100000,
+      objects: [{
+        type: 9, layer: 1, fill: true,
+        points: [{ x: 10000, y: 10000 }, { x: 40000, y: 10000 }, { x: 40000, y: 40000 }],
+      }],
+    }],
+    trailer: {},
+  });
+  const board = Lay6.parse(buf).boards[0];
+  const svg = Lay6Render.renderToSVG(board, VIEW, 400, 400, ALL_VISIBLE);
+  const c = Lay6Render.COLORS.layers[1];
+  assert.match(svg, new RegExp('fill="' + c + '"[^>]*/>'), "generic filled polygon is painted");
+});

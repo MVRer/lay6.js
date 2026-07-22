@@ -5,9 +5,10 @@
   --border: #23272e;
   --border-strong: #2e333c;
   --text: #d3d7dd;
-  --text-dim: #798088;
-  --text-faint: #565c66;
+  --text-dim: #a4aab3;   /* secondary text — clears AA on both surfaces */
+  --text-faint: #8b9099; /* tertiary labels/counts — still clears AA */
   --accent: #4c8dff;
+  --accent-strong: #3a76de; /* filled buttons: clears AA with white text */
   --accent-dim: #2a4a80;
   --danger: #d4515e;
   --warn: #c99b3f;
@@ -110,8 +111,17 @@ header {
   gap: 1px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  overflow: hidden;
   background: var(--border-strong);
+}
+
+/* Round only the outer corners of the end buttons instead of clipping the
+   group with overflow:hidden, which would crop the focus outline. */
+.group .btn:first-child {
+  border-radius: 5px 0 0 5px;
+}
+
+.group .btn:last-child {
+  border-radius: 0 5px 5px 0;
 }
 
 .btn {
@@ -139,13 +149,20 @@ header {
 }
 
 .btn.primary {
-  background: var(--accent);
+  background: var(--accent-strong);
   color: #fff;
   font-weight: 550;
 }
 
 .btn.primary:hover {
-  background: #3f7ff2;
+  background: #4581ea;
+}
+
+/* Bordered secondary button (Demo, encoding select, load-demo). Replaces the
+   previous per-element inline styles. */
+.btn.outline {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
 }
 
 select.btn {
@@ -238,10 +255,14 @@ aside h2 {
 }
 
 .tab .close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  min-height: 22px;
   color: var(--text-faint);
-  padding: 0 4px;
-  border-radius: 3px;
-  line-height: 1.2;
+  border-radius: 4px;
+  line-height: 1;
 }
 
 .tab .close:hover {
@@ -548,8 +569,25 @@ main {
     margin-left: 0;
   }
 
-  .help,
-  .smallprint {
+  /* Keep the disclaimer + source link on mobile; only the long keyboard
+     table is dropped where there is no keyboard anyway. */
+  .help {
     display: none;
+  }
+
+  /* Comfortable touch targets on small screens. */
+  .btn {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+
+  #btn-zoom-in,
+  #btn-zoom-out {
+    min-width: 40px;
+  }
+
+  .tab {
+    padding-top: 8px;
+    padding-bottom: 8px;
   }
 }

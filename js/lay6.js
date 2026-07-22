@@ -175,6 +175,8 @@ var Lay6 = (function () {
     b.sizeX = r.u32(what + " size_x"); // 0x23
     b.sizeY = r.u32(what + " size_y"); // 0x27
     b.groundPane = r.bytes(7, what + " ground pane"); // 0x2B
+    // NOTE: grid is in MICROMETRES, unlike coordinates/sizes (1/10000 mm).
+    // Divide by 1000 for mm — do not pass it through toMM().
     b.grid = r.f64(what + " grid"); // 0x32
     b.zoom = r.f64(what + " zoom"); // 0x3A
     b.viewportOffsetX = r.u32(what + " viewport offset x"); // 0x42
@@ -425,7 +427,8 @@ var Lay6 = (function () {
       byteLength: r.length,
       consumed: r.pos,
     };
-    decodeStrings(doc, "windows-1252");
+    doc.detectedEncoding = detectEncoding(doc);
+    decodeStrings(doc, doc.detectedEncoding);
     return doc;
   }
 
@@ -445,6 +448,73 @@ var Lay6 = (function () {
       for (var i = 0; i < raw.length; i++) s += String.fromCharCode(raw[i]);
       return s;
     }
+  }
+
+  // Collect every raw ANSI byte array in the document so the codepage can
+  // be sniffed before any decoding happens.
+  function collectRawStrings(doc) {
+    var raws = [];
+    function add(r) { if (r && r.length) raws.push(r); }
+    for (var i = 0; i < doc.boards.length; i++) {
+      var b = doc.boards[i];
+      add(b.nameRaw);
+      walkObjects(b.objects, function (o) {
+        add(o.textRaw);
+        add(o.markerRaw);
+        if (o.component) {
+          add(o.component.packageRaw);
+          add(o.component.commentRaw);
+        }
+      });
+    }
+    if (doc.trailer) {
+      add(doc.trailer.projectRaw);
+      add(doc.trailer.authorRaw);
+      add(doc.trailer.companyRaw);
+      add(doc.trailer.commentRaw);
+    }
+    return raws;
+  }
+
+  // Guess the ANSI codepage of the document's strings. Sprint-Layout stores
+  // text in a Windows ANSI codepage with no marker, so a Cyrillic (CP1251)
+  // board decoded as Latin (CP1252) turns into mojibake ("Плата" -> "Ïëàòà").
+  // Heuristic: bytes 0xC0..0xFF are letters in CP1251; a string that is
+  // mostly high bytes with few ASCII letters is far more likely Cyrillic
+  // than accented Latin (which interleaves plenty of ASCII letters).
+  function isCyrByte(c) {
+    // CP1251 Cyrillic letters live in 0xC0..0xFF; a handful of named letters
+    // (Ё ё Є І Ї Ў …) sit lower in the codepage.
+    return (c >= 0xc0 && c <= 0xff) ||
+      c === 0xa8 || c === 0xb8 || c === 0xaf || c === 0xb2 ||
+      c === 0xa5 || c === 0xb4 || c === 0xba || c === 0xbf || c === 0xa1 || c === 0xa2;
+  }
+
+  function detectEncoding(doc) {
+    var raws = collectRawStrings(doc);
+    var totalCyr = 0, totalAscii = 0;
+    // A file uses one ANSI codepage throughout, so a single string that is
+    // clearly Cyrillic settles it. Per-string dominance avoids being drowned
+    // out by ASCII component references (R1, C2 …) and cleanly separates real
+    // Cyrillic ("Плата", a run of high bytes) from accented Latin ("Größe",
+    // where high bytes are isolated among ASCII letters).
+    for (var i = 0; i < raws.length; i++) {
+      var r = raws[i];
+      var cyr = 0, asciiAlpha = 0;
+      for (var j = 0; j < r.length; j++) {
+        var c = r[j];
+        if (isCyrByte(c)) cyr++;
+        else if ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) asciiAlpha++;
+      }
+      totalCyr += cyr;
+      totalAscii += asciiAlpha;
+      if (cyr >= 2 && cyr >= asciiAlpha) return "windows-1251";
+    }
+    // Fallback for Cyrillic scattered across many one-letter strings: only
+    // when high bytes genuinely dominate, so accented-Latin boards (whose
+    // high bytes are outnumbered by ASCII letters) stay on CP1252.
+    if (totalCyr >= 4 && totalCyr >= totalAscii) return "windows-1251";
+    return "windows-1252";
   }
 
   // Re-decode every string field in place with the given codepage.
@@ -505,6 +575,7 @@ var Lay6 = (function () {
   return {
     parse: parse,
     decodeStrings: decodeStrings,
+    detectEncoding: detectEncoding,
     decodeBytes: decodeBytes,
     walkObjects: walkObjects,
     collectPads: collectPads,

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="lay6.js logo">
+  <rect width="96" height="96" rx="20" fill="#131519"/>
+  <rect x="0.5" y="0.5" width="95" height="95" rx="19.5" fill="none" stroke="#2e333c"/>
+  <!-- muted copper pour wash -->
+  <rect x="14" y="14" width="68" height="68" rx="10" fill="#254a80" opacity="0.55"/>
+  <!-- trace -->
+  <path d="M30 30 L30 66 L66 66" fill="none" stroke="#5b9bff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- through-hole pad -->
+  <circle cx="30" cy="30" r="11" fill="#5b9bff"/>
+  <circle cx="30" cy="30" r="4.5" fill="#0e1013"/>
+  <!-- SMD pad -->
+  <rect x="56" y="56" width="20" height="20" rx="2" fill="#4bbd82"/>
+</svg>
