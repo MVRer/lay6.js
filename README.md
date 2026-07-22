@@ -48,8 +48,17 @@ Documented assumptions where the format research is ambiguous:
 
 - angles (arc start/end, rotation) are stored in 1/1000 degree
 - coordinates and widths are stored in 1/10000 mm
+- the y origin is the board's bottom-left corner, so board content spans
+  `-size_y..0`; the viewer shifts by the board height when drawing
+- text objects carry their glyph strokes as child track objects; the
+  string itself is only drawn (approximated with a browser font) when a
+  text object has no children
 - connection blocks follow the board's objects, one per THT/SMD pad in
   document order, including pads inside components
+
+Note: designs made for the classic single-sided toner-transfer workflow are
+often drawn as seen from the copper side, so their text appears mirrored.
+That is faithful to the file — use the Mirror view to read it.
 
 ## Running locally
 

@@ -14,23 +14,35 @@ var Lay6Render = (function () {
   var TYPE = { THT: 2, ZONE: 4, CIRCLE: 5, TRACK: 6, TEXT: 7, SMD: 8 };
 
   var COLORS = {
-    bg: "#10141b",
-    board: "#171e28",
-    hole: "#10141b",
-    measure: "#ff5f8f",
+    bg: "#0e1013",
+    board: "#161a20",
+    hole: "#0e1013",
+    measure: "#e2688b",
     layers: {
-      1: "#3d7bfd", // C1 copper top
-      2: "#e8edf6", // S1 silk top
-      3: "#37a75c", // C2 copper bottom
-      4: "#c8b25a", // S2 silk bottom
-      5: "#c2703f", // I1
-      6: "#a44ab8", // I2
-      7: "#e8c15a", // O outline
+      1: "#4c8dff", // C1 copper top
+      2: "#dde2e9", // S1 silk top
+      3: "#3fa36c", // C2 copper bottom
+      4: "#b3a55e", // S2 silk bottom
+      5: "#bd6b3f", // I1
+      6: "#9c55b0", // I2
+      7: "#d8b13f", // O outline
     },
   };
 
   function mm(u) {
     return u / 10000;
+  }
+  // File y coordinates run downward from the board's bottom-left origin,
+  // so board content spans -size_y..0. Geometry stays in file space; the
+  // view transform shifts everything down by the board height (view.oy).
+  // A sign flip here would mirror glyph strokes vertically.
+  function fy(u) {
+    return u / 10000;
+  }
+  function mapPoints(pts) {
+    return pts.map(function (p) {
+      return { x: mm(p.x), y: fy(p.y) };
+    });
   }
   function deg(md) {
     return md / 1000;
@@ -90,7 +102,7 @@ var Lay6Render = (function () {
 
   // THT pad body, dilated by `e` mm (used for clearance punching).
   function thtPadD(o, e) {
-    var x = mm(o.x), y = mm(o.y), r = mm(o.out) + e;
+    var x = mm(o.x), y = fy(o.y), r = mm(o.out) + e;
     var rot = deg(o.rotation);
     if (o.thtShape === 3) return rotatedRect(x, y, r, r, rot);
     if (o.thtShape === 2) return octagonD(x, y, r, rot);
@@ -98,7 +110,7 @@ var Lay6Render = (function () {
   }
 
   function smdPadD(o, e) {
-    return rotatedRect(mm(o.x), mm(o.y), mm(o.out) / 2 + e, mm(o.in) / 2 + e, deg(o.rotation));
+    return rotatedRect(mm(o.x), fy(o.y), mm(o.out) / 2 + e, mm(o.in) / 2 + e, deg(o.rotation));
   }
 
   // Circle object: annulus or partial arc band.
@@ -106,7 +118,7 @@ var Lay6Render = (function () {
   // angles in 1/1000 degree. Equal angles mean a full ring.
   function circleBandD(o, e) {
     e = e || 0;
-    var cx = mm(o.x), cy = mm(o.y);
+    var cx = mm(o.x), cy = fy(o.y);
     var ri = Math.max(0, mm(o.out) - e);
     var ro = mm(o.in) + e;
     if (ro <= 0) return null;
@@ -134,7 +146,7 @@ var Lay6Render = (function () {
 
   // Thermal spokes: four strokes at 45° offsets from the pad rotation.
   function thermalSpokes(o) {
-    var cx = mm(o.x), cy = mm(o.y);
+    var cx = mm(o.x), cy = fy(o.y);
     var reach = (o.type === TYPE.SMD ? Math.max(mm(o.out), mm(o.in)) / 2 : mm(o.out)) +
       mm(o.groundDistance) + 0.05;
     var width = Math.max(0.15, (o.type === TYPE.SMD ? Math.min(mm(o.out), mm(o.in)) / 2 : mm(o.out)) * 0.45);
@@ -202,6 +214,7 @@ var Lay6Render = (function () {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.translate(view.tx, view.ty);
     ctx.scale(view.mirror ? -view.scale : view.scale, view.scale);
+    ctx.translate(0, view.oy || 0);
   }
 
   function fillD(ctx, d, color) {
@@ -216,18 +229,20 @@ var Lay6Render = (function () {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.moveTo(mm(o.points[0].x), mm(o.points[0].y));
-    for (var i = 1; i < o.points.length; i++) ctx.lineTo(mm(o.points[i].x), mm(o.points[i].y));
+    ctx.moveTo(mm(o.points[0].x), fy(o.points[0].y));
+    for (var i = 1; i < o.points.length; i++) ctx.lineTo(mm(o.points[i].x), fy(o.points[i].y));
     if (closed) ctx.closePath();
     ctx.stroke();
   }
 
   function drawText(ctx, o, color) {
     var text = o.text || "";
-    if (!text) return;
+    // Real files store the glyph strokes as child track objects, which the
+    // render list already emits; drawing the string too would double-render.
+    if (!text || (o.children && o.children.length)) return;
     var h = Math.max(mm(o.out), 0.4);
     ctx.save();
-    ctx.translate(mm(o.x), mm(o.y));
+    ctx.translate(mm(o.x), fy(o.y));
     ctx.rotate(rad(-deg(o.rotation)));
     if (o.flipVertical) ctx.scale(-1, 1);
     ctx.fillStyle = color;
@@ -255,7 +270,7 @@ var Lay6Render = (function () {
       case TYPE.ZONE:
         if (!o.points || o.points.length < 2) break;
         if (o.fill) {
-          fillD(ctx, polygonD(o.points.map(function (p) { return { x: mm(p.x), y: mm(p.y) }; })), color);
+          fillD(ctx, polygonD(mapPoints(o.points)), color);
         } else {
           strokePoly(ctx, o, color, mm(o.lineWidth), true);
         }
@@ -348,11 +363,16 @@ var Lay6Render = (function () {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!board) return;
 
+    view = {
+      scale: view.scale, tx: view.tx, ty: view.ty,
+      mirror: view.mirror, dpr: view.dpr,
+      oy: mm(board.sizeY),
+    };
     applyView(ctx, view);
 
-    // board area
+    // board area (file space: y in -size_y..0)
     ctx.fillStyle = COLORS.board;
-    ctx.fillRect(0, 0, mm(board.sizeX), mm(board.sizeY));
+    ctx.fillRect(0, -mm(board.sizeY), mm(board.sizeX), mm(board.sizeY));
 
     var by = itemsByLayer(board);
     for (var zi = 0; zi < Lay6.LAYER_Z_ORDER.length; zi++) {
@@ -377,7 +397,7 @@ var Lay6Render = (function () {
     for (var di = 0; di < items.length; di++) {
       var o = items[di].o;
       if (o.type === TYPE.THT && visible[o.layer] && mm(o.in) > 0) {
-        ctx.fill(new Path2D(circleD(mm(o.x), mm(o.y), mm(o.in))));
+        ctx.fill(new Path2D(circleD(mm(o.x), fy(o.y), mm(o.in))));
       }
     }
   }
@@ -400,25 +420,25 @@ var Lay6Render = (function () {
         return d ? '<path d="' + d + '" fill="' + color + '" fill-rule="evenodd"/>' : "";
       case TYPE.TRACK:
         if (!o.points || !o.points.length) return "";
-        return '<path d="' + polylineD(o.points.map(function (p) { return { x: mm(p.x), y: mm(p.y) }; })) +
+        return '<path d="' + polylineD(mapPoints(o.points)) +
           '" fill="none" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) +
           '" stroke-linecap="round" stroke-linejoin="round"/>';
       case TYPE.ZONE:
         if (!o.points || o.points.length < 2) return "";
-        var zd = polygonD(o.points.map(function (p) { return { x: mm(p.x), y: mm(p.y) }; }));
+        var zd = polygonD(mapPoints(o.points));
         if (o.fill) return '<path d="' + zd + '" fill="' + color + '"/>';
         return '<path d="' + zd + '" fill="none" stroke="' + color +
           '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '" stroke-linejoin="round"/>';
       case TYPE.TEXT:
-        if (!o.text) return "";
+        if (!o.text || (o.children && o.children.length)) return "";
         var h = Math.max(mm(o.out), 0.4);
-        var tf = "translate(" + fmt(mm(o.x)) + " " + fmt(mm(o.y)) + ") rotate(" + fmt(-deg(o.rotation)) + ")" +
+        var tf = "translate(" + fmt(mm(o.x)) + " " + fmt(fy(o.y)) + ") rotate(" + fmt(-deg(o.rotation)) + ")" +
           (o.flipVertical ? " scale(-1 1)" : "");
         return '<text transform="' + tf + '" font-size="' + fmt(h) +
           '" font-family="sans-serif" fill="' + color + '">' + esc(o.text) + "</text>";
       default:
         if (o.points && o.points.length) {
-          return '<path d="' + polylineD(o.points.map(function (p) { return { x: mm(p.x), y: mm(p.y) }; })) +
+          return '<path d="' + polylineD(mapPoints(o.points)) +
             '" fill="none" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '"/>';
         }
         return "";
@@ -436,7 +456,7 @@ var Lay6Render = (function () {
         return '<path d="' + smdPadD(o, e) + '" fill="black"/>';
       case TYPE.TRACK:
         if (!o.points || !o.points.length) return "";
-        return '<path d="' + polylineD(o.points.map(function (p) { return { x: mm(p.x), y: mm(p.y) }; })) +
+        return '<path d="' + polylineD(mapPoints(o.points)) +
           '" fill="none" stroke="black" stroke-width="' + fmt(mm(o.lineWidth) + 2 * e) +
           '" stroke-linecap="round" stroke-linejoin="round"/>';
       case TYPE.CIRCLE:
@@ -457,10 +477,11 @@ var Lay6Render = (function () {
       '" viewBox="0 0 ' + widthPx + " " + heightPx + '">');
     parts.push('<rect width="100%" height="100%" fill="' + COLORS.bg + '"/>');
     var tf = "translate(" + fmt(view.tx) + " " + fmt(view.ty) + ") scale(" +
-      fmt(view.mirror ? -view.scale : view.scale) + " " + fmt(view.scale) + ")";
+      fmt(view.mirror ? -view.scale : view.scale) + " " + fmt(view.scale) +
+      ") translate(0 " + fmt(mm(board.sizeY)) + ")";
     parts.push('<g transform="' + tf + '">');
-    parts.push('<rect x="0" y="0" width="' + fmt(mm(board.sizeX)) + '" height="' + fmt(mm(board.sizeY)) +
-      '" fill="' + COLORS.board + '"/>');
+    parts.push('<rect x="0" y="' + fmt(-mm(board.sizeY)) + '" width="' + fmt(mm(board.sizeX)) +
+      '" height="' + fmt(mm(board.sizeY)) + '" fill="' + COLORS.board + '"/>');
 
     var by = itemsByLayer(board);
     var defs = [];
@@ -508,7 +529,7 @@ var Lay6Render = (function () {
     for (var di = 0; di < items.length; di++) {
       var od = items[di].o;
       if (od.type === TYPE.THT && visible[od.layer] && mm(od.in) > 0) {
-        parts.push('<circle cx="' + fmt(mm(od.x)) + '" cy="' + fmt(mm(od.y)) + '" r="' + fmt(mm(od.in)) +
+        parts.push('<circle cx="' + fmt(mm(od.x)) + '" cy="' + fmt(fy(od.y)) + '" r="' + fmt(mm(od.in)) +
           '" fill="' + COLORS.hole + '"/>');
       }
     }
