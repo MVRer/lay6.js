@@ -43,6 +43,9 @@ of turning into a wall of colour:
 - **Copper pours are a muted wash**, drawn *under* the bright tracks and pads, so
   a trace crossing a ground plane stays visible instead of vanishing into a slab
   of the same colour.
+- **Traces and pads are outlined** (a dark "casing"), so touching or densely
+  packed copper reads as separate shapes instead of merging into one blob — and
+  hovering any conductor lights up its whole connected net to follow a route.
 - **Every layer has its own high‑contrast tone** on a dark canvas — copper,
   silkscreen, inner and outline layers never blur together.
 - **Cyrillic (and other) text is auto‑detected.** A board authored in a Russian

@@ -47,6 +47,76 @@ var Lay6Render = (function () {
     return COLORS.pour[layer] || COLORS.layers[layer];
   }
 
+  /* --- copper "casing": a dark outline drawn under each copper object so
+     touching/adjacent traces and pads read as separate shapes instead of
+     merging into one flat blob (the technique gerber/PCB viewers use). --- */
+
+  function hexToRgb(h) {
+    h = h.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function mixHex(a, b, t) {
+    var A = hexToRgb(a), B = hexToRgb(b), out = "#";
+    for (var i = 0; i < 3; i++) {
+      var v = Math.round(A[i] + (B[i] - A[i]) * t);
+      out += (v < 16 ? "0" : "") + v.toString(16);
+    }
+    return out;
+  }
+  var edgeCache = {};
+  function edgeColor(layer) {
+    return edgeCache[layer] ||
+      (edgeCache[layer] = mixHex(COLORS.layers[layer] || "#888", "#05070a", 0.72));
+  }
+  // Casing half-width in mm that stays ~constant on screen at any zoom.
+  var CASE_PX = 1.6;
+  function casingWidthMM(scale) {
+    return CASE_PX / (scale || viewScale || 1);
+  }
+
+  // Dilated silhouette of one object, filled/stroked in the casing colour.
+  function drawCasing(ctx, o, edge, cw) {
+    switch (o.type) {
+      case TYPE.THT:
+        fillD(ctx, thtPadD(o, cw), edge);
+        break;
+      case TYPE.SMD:
+        var sd = smdPadD(o, cw);
+        fillD(ctx, sd, edge);
+        if (smdIsPoly(o)) {
+          ctx.strokeStyle = edge;
+          ctx.lineJoin = "round";
+          ctx.lineWidth = 2 * cw;
+          ctx.stroke(new Path2D(sd));
+        }
+        break;
+      case TYPE.CIRCLE:
+        var d = circleBandD(o, cw);
+        if (d) fillD(ctx, d, edge);
+        break;
+      case TYPE.TRACK:
+        strokePoly(ctx, o, edge, mm(o.lineWidth) + 2 * cw, false);
+        break;
+      default:
+        // generic polyline objects on copper (rare)
+        if (o.points && o.points.length) {
+          strokePoly(ctx, o, edge, mm(o.lineWidth) + 2 * cw, pointsClosed(o.points));
+        }
+    }
+  }
+
+  // Draw a layer's objects with casing under copper; single pass otherwise.
+  function drawLayerObjects(ctx, objs, layer, color) {
+    var i;
+    if (Lay6.COPPER_LAYERS[layer]) {
+      var edge = edgeColor(layer), cw = casingWidthMM();
+      for (i = 0; i < objs.length; i++) {
+        if (objs[i].type !== TYPE.ZONE) drawCasing(ctx, objs[i], edge, cw);
+      }
+    }
+    for (i = 0; i < objs.length; i++) drawObject(ctx, objs[i], color);
+  }
+
   function mm(u) {
     return u / 10000;
   }
@@ -430,7 +500,7 @@ var Lay6Render = (function () {
     return false;
   }
 
-  function renderLayerWithZones(mainCtx, objs, color, view, canvasW, canvasH) {
+  function renderLayerWithZones(mainCtx, objs, layer, color, view, canvasW, canvasH) {
     var os = getOffscreen(canvasW, canvasH);
     var ctx = os.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -466,7 +536,10 @@ var Lay6Render = (function () {
       }
     }
 
-    // 4. the objects themselves on top of the relieved zone
+    // 4. the objects on top of the relieved zone, cased so touching copper
+    // stays distinguishable from the pour and from each other
+    var edge = edgeColor(layer), cw = casingWidthMM();
+    for (i = 0; i < rest.length; i++) drawCasing(ctx, rest[i], edge, cw);
     for (i = 0; i < rest.length; i++) drawObject(ctx, rest[i], color);
 
     mainCtx.save();
@@ -510,10 +583,10 @@ var Lay6Render = (function () {
       var hasFilledZone = Lay6.COPPER_LAYERS[layer] &&
         objs.some(function (o) { return o.type === TYPE.ZONE && o.fill; });
       if (hasFilledZone) {
-        renderLayerWithZones(ctx, objs, color, view, canvas.width, canvas.height);
+        renderLayerWithZones(ctx, objs, layer, color, view, canvas.width, canvas.height);
         applyView(ctx, view); // renderLayerWithZones resets the transform
       } else {
-        for (var i = 0; i < objs.length; i++) drawObject(ctx, objs[i], color);
+        drawLayerObjects(ctx, objs, layer, color);
       }
     }
 
@@ -944,6 +1017,26 @@ var Lay6Render = (function () {
     return "";
   }
 
+  // SVG counterpart of drawCasing: dilated silhouette in the casing colour.
+  function svgCasing(o, edge, cw) {
+    switch (o.type) {
+      case TYPE.THT:
+        return '<path d="' + thtPadD(o, cw) + '" fill="' + edge + '" fill-rule="evenodd"/>';
+      case TYPE.SMD:
+        return '<path d="' + smdPadD(o, cw) + '" fill="' + edge + '"' +
+          (smdIsPoly(o) ? ' stroke="' + edge + '" stroke-width="' + fmt(2 * cw) + '" stroke-linejoin="round"' : "") + '/>';
+      case TYPE.CIRCLE:
+        var d = circleBandD(o, cw);
+        return d ? '<path d="' + d + '" fill="' + edge + '" fill-rule="evenodd"/>' : "";
+      case TYPE.TRACK:
+        if (!o.points || !o.points.length) return "";
+        return '<path d="' + polylineD(mapPoints(o.points)) + '" fill="none" stroke="' + edge +
+          '" stroke-width="' + fmt(mm(o.lineWidth) + 2 * cw) + '" stroke-linecap="round" stroke-linejoin="round"/>';
+      default:
+        return "";
+    }
+  }
+
   /**
    * Export the current view as a standalone SVG document (same transform
    * as the canvas: pixels, y-down, optional mirror).
@@ -998,8 +1091,16 @@ var Lay6Render = (function () {
         parts.push('<g mask="url(#' + id + ')">');
         for (i = 0; i < zones.length; i++) parts.push(svgObject(zones[i], color));
         parts.push("</g>");
+        var edgeZ = edgeColor(layer), cwZ = casingWidthMM(view.scale);
+        for (i = 0; i < rest.length; i++) parts.push(svgCasing(rest[i], edgeZ, cwZ));
         for (i = 0; i < rest.length; i++) parts.push(svgObject(rest[i], color));
       } else {
+        if (Lay6.COPPER_LAYERS[layer]) {
+          var edge = edgeColor(layer), cw = casingWidthMM(view.scale);
+          for (i = 0; i < objs.length; i++) {
+            if (objs[i].type !== TYPE.ZONE) parts.push(svgCasing(objs[i], edge, cw));
+          }
+        }
         for (i = 0; i < objs.length; i++) parts.push(svgObject(objs[i], color));
       }
     }
