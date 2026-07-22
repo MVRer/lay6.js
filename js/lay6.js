@@ -48,9 +48,9 @@ var Lay6 = (function () {
 
   var COPPER_LAYERS = { 1: true, 3: true, 5: true, 6: true };
 
-  // Painting order, first = bottom-most. Bottom copper under silkscreen
-  // under top copper; the board outline always paints on top.
-  var LAYER_Z_ORDER = [3, 4, 6, 5, 2, 1, 7];
+  // Painting order, first = bottom-most: copper layers, then silkscreen so
+  // component outlines and labels stay legible, then the board outline.
+  var LAYER_Z_ORDER = [3, 5, 6, 1, 4, 2, 7];
 
   // Painting order of object types inside one layer, first = bottom-most:
   // zones under tracks under pads so pads never vanish beneath a fill.

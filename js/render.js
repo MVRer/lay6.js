@@ -17,6 +17,7 @@ var Lay6Render = (function () {
     bg: "#0e1013",
     board: "#161a20",
     hole: "#0e1013",
+    dimOutside: "rgba(14, 16, 19, 0.62)",
     measure: "#e2688b",
     layers: {
       1: "#4c8dff", // C1 copper top
@@ -109,8 +110,16 @@ var Lay6Render = (function () {
     return circleD(x, y, r);
   }
 
+  // The pad's corner polygon (when present) is authoritative: the x/y
+  // anchor of SMD pads in real files is frequently stale while the points
+  // sit at the true position. Dilation for e > 0 on polygon pads is done
+  // by the callers with an additional stroke.
   function smdPadD(o, e) {
+    if (o.points && o.points.length >= 3) return polygonD(mapPoints(o.points));
     return rotatedRect(mm(o.x), fy(o.y), mm(o.out) / 2 + e, mm(o.in) / 2 + e, deg(o.rotation));
+  }
+  function smdIsPoly(o) {
+    return !!(o.points && o.points.length >= 3);
   }
 
   // Circle object: annulus or partial arc band.
@@ -179,9 +188,12 @@ var Lay6Render = (function () {
         if (o.children && o.children.length) emit(o.children);
       }
     })(board.objects);
+    function typeZ(t) {
+      return Lay6.TYPE_Z[t] !== undefined ? Lay6.TYPE_Z[t] : 2;
+    }
     items.sort(function (a, b) {
       return (layerZ(a.o.layer) - layerZ(b.o.layer)) ||
-        ((Lay6.TYPE_Z[a.o.type] || 2) - (Lay6.TYPE_Z[b.o.type] || 2)) ||
+        (typeZ(a.o.type) - typeZ(b.o.type)) ||
         (a.seq - b.seq);
     });
     board._renderList = items;
@@ -208,6 +220,42 @@ var Lay6Render = (function () {
       offscreen.height = h;
     }
     return offscreen;
+  }
+
+  // Adaptive board grid: the finest step of 0.1/0.5/1/5/10 mm that stays
+  // at least ~11 screen pixels apart, with a stronger line every 5 steps.
+  function drawGrid(ctx, board, view) {
+    var steps = [0.1, 0.5, 1, 5, 10];
+    var step = 10;
+    for (var s = 0; s < steps.length; s++) {
+      if (steps[s] * view.scale >= 11) {
+        step = steps[s];
+        break;
+      }
+    }
+    var W = mm(board.sizeX), H = mm(board.sizeY);
+    ctx.lineWidth = 1 / view.scale;
+    var n, i, v;
+    for (var pass = 0; pass < 2; pass++) {
+      var major = pass === 1;
+      ctx.strokeStyle = major ? "rgba(255,255,255,0.09)" : "rgba(255,255,255,0.045)";
+      ctx.beginPath();
+      n = Math.floor(W / step);
+      for (i = 0; i <= n; i++) {
+        if ((i % 5 === 0) !== major) continue;
+        v = i * step;
+        ctx.moveTo(v, -H);
+        ctx.lineTo(v, 0);
+      }
+      n = Math.floor(H / step);
+      for (i = 0; i <= n; i++) {
+        if ((i % 5 === 0) !== major) continue;
+        v = -H + i * step;
+        ctx.moveTo(0, v);
+        ctx.lineTo(W, v);
+      }
+      ctx.stroke();
+    }
   }
 
   function applyView(ctx, view) {
@@ -293,7 +341,14 @@ var Lay6Render = (function () {
         fillD(ctx, thtPadD(o, e), "#000");
         return true;
       case TYPE.SMD:
-        fillD(ctx, smdPadD(o, e), "#000");
+        var sd = smdPadD(o, e);
+        fillD(ctx, sd, "#000");
+        if (smdIsPoly(o) && e > 0) {
+          ctx.strokeStyle = "#000";
+          ctx.lineJoin = "round";
+          ctx.lineWidth = 2 * e;
+          ctx.stroke(new Path2D(sd));
+        }
         return true;
       case TYPE.TRACK:
         strokePoly(ctx, o, "#000", mm(o.lineWidth) + 2 * e, false);
@@ -365,7 +420,7 @@ var Lay6Render = (function () {
 
     view = {
       scale: view.scale, tx: view.tx, ty: view.ty,
-      mirror: view.mirror, dpr: view.dpr,
+      mirror: view.mirror, dpr: view.dpr, grid: view.grid,
       oy: mm(board.sizeY),
     };
     applyView(ctx, view);
@@ -373,6 +428,8 @@ var Lay6Render = (function () {
     // board area (file space: y in -size_y..0)
     ctx.fillStyle = COLORS.board;
     ctx.fillRect(0, -mm(board.sizeY), mm(board.sizeX), mm(board.sizeY));
+
+    if (view.grid) drawGrid(ctx, board, view);
 
     var by = itemsByLayer(board);
     for (var zi = 0; zi < Lay6.LAYER_Z_ORDER.length; zi++) {
@@ -391,6 +448,15 @@ var Lay6Render = (function () {
       }
     }
 
+    // fade everything parked outside the board outline so the board itself
+    // stays the focus
+    var W = mm(board.sizeX), H = mm(board.sizeY), B = 100000;
+    ctx.fillStyle = COLORS.dimOutside;
+    ctx.fill(new Path2D(
+      "M " + -B + " " + -B + " L " + B + " " + -B + " L " + B + " " + B + " L " + -B + " " + B + " Z" +
+      " M 0 " + fmt(-H) + " L " + fmt(W) + " " + fmt(-H) + " L " + fmt(W) + " 0 L 0 0 Z"
+    ), "evenodd");
+
     // drill holes go through everything
     ctx.fillStyle = COLORS.hole;
     var items = buildRenderList(board);
@@ -400,6 +466,331 @@ var Lay6Render = (function () {
         ctx.fill(new Path2D(circleD(mm(o.x), fy(o.y), mm(o.in))));
       }
     }
+  }
+
+  /* --------------------------- net tracing --------------------------- */
+
+  var CONDUCTIVE = { 2: true, 6: true, 8: true };
+
+  function padCenter(o) {
+    if (o.type === TYPE.SMD && smdIsPoly(o)) {
+      var sx = 0, sy = 0;
+      for (var i = 0; i < o.points.length; i++) {
+        sx += mm(o.points[i].x);
+        sy += mm(o.points[i].y);
+      }
+      return { x: sx / o.points.length, y: sy / o.points.length };
+    }
+    return { x: mm(o.x), y: mm(o.y) };
+  }
+
+  function padRadius(o) {
+    if (o.type === TYPE.THT) return mm(o.out);
+    if (o.type === TYPE.SMD) {
+      if (smdIsPoly(o)) {
+        var c = padCenter(o), r = 0;
+        for (var i = 0; i < o.points.length; i++) {
+          r = Math.max(r, Math.hypot(mm(o.points[i].x) - c.x, mm(o.points[i].y) - c.y));
+        }
+        return r;
+      }
+      return Math.hypot(mm(o.out), mm(o.in)) / 2;
+    }
+    return 0;
+  }
+
+  function trackMinDist(o, px, py) {
+    var best = Infinity;
+    for (var s = 0; s + 1 < o.points.length; s++) {
+      best = Math.min(best, distToSegment(px, py,
+        mm(o.points[s].x), mm(o.points[s].y),
+        mm(o.points[s + 1].x), mm(o.points[s + 1].y)));
+    }
+    return best;
+  }
+
+  // Distance between two segments, approximated by endpoint-to-segment
+  // checks; good enough for touch detection at PCB scales.
+  function segSegDist(ax, ay, bx, by, cx2, cy2, dx2, dy2) {
+    return Math.min(
+      distToSegment(ax, ay, cx2, cy2, dx2, dy2),
+      distToSegment(bx, by, cx2, cy2, dx2, dy2),
+      distToSegment(cx2, cy2, ax, ay, bx, by),
+      distToSegment(dx2, dy2, ax, ay, bx, by));
+  }
+
+  function padPoly(o) {
+    return o.type === TYPE.SMD && smdIsPoly(o) ? o.points : null;
+  }
+
+  function trackTouchesPoly(t, poly, halfW, eps) {
+    var i, j;
+    for (i = 0; i < t.points.length; i++) {
+      if (pointInPolygon(mm(t.points[i].x), mm(t.points[i].y), poly)) return true;
+    }
+    for (i = 0; i + 1 < t.points.length; i++) {
+      for (j = 0; j < poly.length; j++) {
+        var k = (j + 1) % poly.length;
+        if (segSegDist(
+          mm(t.points[i].x), mm(t.points[i].y), mm(t.points[i + 1].x), mm(t.points[i + 1].y),
+          mm(poly[j].x), mm(poly[j].y), mm(poly[k].x), mm(poly[k].y)) <= halfW + eps) return true;
+      }
+    }
+    return false;
+  }
+
+  function conductorsTouch(a, b) {
+    // THT pads are plated through, so they join nets across copper layers.
+    if (a.layer !== b.layer && a.type !== TYPE.THT && b.type !== TYPE.THT) return false;
+    var eps = 0.05;
+    var i, j, k, l;
+    var aTrack = a.type === TYPE.TRACK, bTrack = b.type === TYPE.TRACK;
+    if (aTrack && bTrack) {
+      if (!a.points || !b.points || !a.points.length || !b.points.length) return false;
+      var th = mm(a.lineWidth) / 2 + mm(b.lineWidth) / 2 + eps;
+      for (i = 0; i < a.points.length; i++) {
+        if (trackMinDist(b, mm(a.points[i].x), mm(a.points[i].y)) <= th) return true;
+      }
+      for (j = 0; j < b.points.length; j++) {
+        if (trackMinDist(a, mm(b.points[j].x), mm(b.points[j].y)) <= th) return true;
+      }
+      return false;
+    }
+    if (aTrack || bTrack) {
+      var t = aTrack ? a : b, p = aTrack ? b : a;
+      if (!t.points || !t.points.length) return false;
+      var poly = padPoly(p);
+      if (poly) return trackTouchesPoly(t, poly, mm(t.lineWidth) / 2, eps);
+      var c = padCenter(p);
+      return trackMinDist(t, c.x, c.y) <= mm(t.lineWidth) / 2 + padRadius(p) + eps;
+    }
+    // pad vs pad: use true polygon edges when available so long pads at
+    // fine pitch don't get bridged by their circumscribed radius
+    var pa = padPoly(a), pb = padPoly(b);
+    var ca = padCenter(a), cb = padCenter(b);
+    if (pa && pb) {
+      if (pointInPolygon(cb.x, cb.y, pa) || pointInPolygon(ca.x, ca.y, pb)) return true;
+      for (i = 0; i < pa.length; i++) {
+        j = (i + 1) % pa.length;
+        for (k = 0; k < pb.length; k++) {
+          l = (k + 1) % pb.length;
+          if (segSegDist(
+            mm(pa[i].x), mm(pa[i].y), mm(pa[j].x), mm(pa[j].y),
+            mm(pb[k].x), mm(pb[k].y), mm(pb[l].x), mm(pb[l].y)) <= eps) return true;
+        }
+      }
+      return false;
+    }
+    if (pa || pb) {
+      var poly2 = pa || pb;
+      var oc = pa ? cb : ca;
+      var or2 = padRadius(pa ? b : a);
+      if (pointInPolygon(oc.x, oc.y, poly2)) return true;
+      for (i = 0; i < poly2.length; i++) {
+        j = (i + 1) % poly2.length;
+        if (distToSegment(oc.x, oc.y, mm(poly2[i].x), mm(poly2[i].y),
+            mm(poly2[j].x), mm(poly2[j].y)) <= or2 + eps) return true;
+      }
+      return false;
+    }
+    return Math.hypot(ca.x - cb.x, ca.y - cb.y) <= padRadius(a) + padRadius(b) + eps;
+  }
+
+  // Group all copper tracks/pads into electrically connected nets by
+  // geometric contact, and attach nearby silkscreen labels to each net.
+  // Approximate by nature (documented in the README): zones are excluded.
+  function buildNets(board) {
+    if (board._nets) return board._nets;
+    var cond = [];
+    var items = buildRenderList(board);
+    for (var i = 0; i < items.length; i++) {
+      var o = items[i].o;
+      if (CONDUCTIVE[o.type] && Lay6.COPPER_LAYERS[o.layer]) cond.push(o);
+    }
+    var parent = [];
+    for (i = 0; i < cond.length; i++) parent.push(i);
+    function find(x) {
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    }
+    for (i = 0; i < cond.length; i++) {
+      for (var j = i + 1; j < cond.length; j++) {
+        if (find(i) !== find(j) && conductorsTouch(cond[i], cond[j])) {
+          parent[find(i)] = find(j);
+        }
+      }
+    }
+    var members = {};
+    for (i = 0; i < cond.length; i++) {
+      var root = find(i);
+      cond[i]._netRoot = root;
+      (members[root] || (members[root] = [])).push(cond[i]);
+    }
+    // nearby text labels: a label names a net when its anchor sits close
+    // to one of the net's pads or track endpoints
+    var texts = [];
+    Lay6.walkObjects(board.objects, function (o) {
+      if (o.type === TYPE.TEXT && o.text) {
+        texts.push({ x: mm(o.x), y: fy(o.y), text: o.text });
+      }
+    });
+    var labels = {};
+    Object.keys(members).forEach(function (root) {
+      var found = [];
+      for (var t = 0; t < texts.length; t++) {
+        var best = Infinity;
+        var net = members[root];
+        for (var m = 0; m < net.length; m++) {
+          var o = net[m];
+          if (o.type === TYPE.TRACK) {
+            var pts = o.points || [];
+            for (var e = 0; e < pts.length; e += Math.max(1, pts.length - 1)) {
+              best = Math.min(best,
+                Math.hypot(texts[t].x - mm(pts[e].x), texts[t].y - mm(pts[e].y)));
+            }
+          } else {
+            var c = padCenter(o);
+            best = Math.min(best, Math.hypot(texts[t].x - c.x, texts[t].y - c.y));
+          }
+        }
+        if (best < 2.0) found.push({ text: texts[t].text, d: best });
+      }
+      found.sort(function (a, b) { return a.d - b.d; });
+      var uniq = [];
+      found.forEach(function (f) {
+        if (uniq.indexOf(f.text) === -1) uniq.push(f.text);
+      });
+      labels[root] = uniq;
+    });
+    board._nets = { members: members, labels: labels };
+    return board._nets;
+  }
+
+  /* -------------------- hover highlight & hit test ------------------- */
+
+  var HL_FILL = "rgba(255, 214, 106, 0.4)";
+  var HL_STROKE = "#ffd76a";
+  var HL_FILL_SOFT = "rgba(255, 214, 106, 0.18)";
+  var HL_STROKE_SOFT = "rgba(255, 214, 106, 0.6)";
+
+  // Draw a halo around one object on top of the finished render.
+  // soft = true renders the dimmer style used for other net members.
+  function highlightObject(ctx, board, o, view, soft) {
+    view = {
+      scale: view.scale, tx: view.tx, ty: view.ty,
+      mirror: view.mirror, dpr: view.dpr,
+      oy: mm(board.sizeY),
+    };
+    ctx.save();
+    applyView(ctx, view);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    var fill = soft ? HL_FILL_SOFT : HL_FILL;
+    var stroke = soft ? HL_STROKE_SOFT : HL_STROKE;
+    function outline(d) {
+      var p = new Path2D(d);
+      ctx.fillStyle = fill;
+      ctx.fill(p, "evenodd");
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = (soft ? 1.25 : 2) / view.scale;
+      ctx.stroke(p);
+    }
+    switch (o.type) {
+      case TYPE.THT:
+        outline(thtPadD(o, 0));
+        break;
+      case TYPE.SMD:
+        outline(smdPadD(o, 0));
+        break;
+      case TYPE.CIRCLE:
+        var d = circleBandD(o, 0);
+        if (d) outline(d);
+        break;
+      case TYPE.TRACK:
+      default:
+        if (o.points && o.points.length) {
+          strokePoly(ctx, o, soft ? "rgba(255, 214, 106, 0.3)" : "rgba(255, 214, 106, 0.55)",
+            mm(o.lineWidth) + (soft ? 2.5 : 4) / view.scale, false);
+          strokePoly(ctx, o, stroke, Math.max(mm(o.lineWidth) * 0.4, 1 / view.scale), false);
+        }
+        break;
+      case TYPE.ZONE:
+        if (o.points && o.points.length >= 2) {
+          strokePoly(ctx, o, stroke, Math.max(mm(o.lineWidth), 2 / view.scale), true);
+        }
+        break;
+    }
+    ctx.restore();
+  }
+
+  function distToSegment(px, py, ax, ay, bx, by) {
+    var dx = bx - ax, dy = by - ay;
+    var len2 = dx * dx + dy * dy;
+    var t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    var qx = ax + t * dx, qy = ay + t * dy;
+    return Math.hypot(px - qx, py - qy);
+  }
+
+  function pointInPolygon(px, py, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = mm(pts[i].x), yi = mm(pts[i].y);
+      var xj = mm(pts[j].x), yj = mm(pts[j].y);
+      if ((yi > py) !== (yj > py) &&
+          px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  // Find the topmost visible object at file coordinates (fx, fyv) in mm.
+  function hitTest(board, fx, fyv, tol, visible) {
+    var items = buildRenderList(board);
+    for (var i = items.length - 1; i >= 0; i--) {
+      var o = items[i].o;
+      if (!visible[o.layer]) continue;
+      if (o.type === TYPE.TEXT) continue; // children are hit individually
+      var dx, dy, d;
+      if (o.type === TYPE.THT) {
+        if (Math.hypot(fx - mm(o.x), fyv - mm(o.y)) <= mm(o.out) + tol) return o;
+      } else if (o.type === TYPE.SMD) {
+        if (smdIsPoly(o)) {
+          if (pointInPolygon(fx, fyv, o.points)) return o;
+          continue;
+        }
+        dx = fx - mm(o.x);
+        dy = fyv - mm(o.y);
+        var r = rad(-deg(o.rotation));
+        var lx = dx * Math.cos(r) + dy * Math.sin(r);
+        var ly = -dx * Math.sin(r) + dy * Math.cos(r);
+        if (Math.abs(lx) <= mm(o.out) / 2 + tol && Math.abs(ly) <= mm(o.in) / 2 + tol) return o;
+      } else if (o.type === TYPE.CIRCLE) {
+        d = Math.hypot(fx - mm(o.x), fyv - mm(o.y));
+        if (d >= mm(o.out) - tol && d <= mm(o.in) + tol) return o;
+      } else if (o.type === TYPE.ZONE) {
+        if (!o.points || o.points.length < 3) continue;
+        if (o.fill && pointInPolygon(fx, fyv, o.points)) return o;
+        if (!o.fill) {
+          for (var z = 0; z < o.points.length; z++) {
+            var zn = o.points[(z + 1) % o.points.length];
+            if (distToSegment(fx, fyv, mm(o.points[z].x), mm(o.points[z].y),
+                mm(zn.x), mm(zn.y)) <= mm(o.lineWidth) / 2 + tol) return o;
+          }
+        }
+      } else if (o.points && o.points.length) {
+        var half = mm(o.lineWidth) / 2 + tol;
+        for (var s = 0; s + 1 < o.points.length; s++) {
+          if (distToSegment(fx, fyv, mm(o.points[s].x), mm(o.points[s].y),
+              mm(o.points[s + 1].x), mm(o.points[s + 1].y)) <= half) return o;
+        }
+      }
+    }
+    return null;
   }
 
   /* ------------------------- SVG export ------------------------------ */
@@ -453,7 +844,10 @@ var Lay6Render = (function () {
       case TYPE.THT:
         return '<path d="' + thtPadD(o, e) + '" fill="black" fill-rule="evenodd"/>';
       case TYPE.SMD:
-        return '<path d="' + smdPadD(o, e) + '" fill="black"/>';
+        return '<path d="' + smdPadD(o, e) + '" fill="black"' +
+          (smdIsPoly(o) && e > 0
+            ? ' stroke="black" stroke-width="' + fmt(2 * e) + '" stroke-linejoin="round"'
+            : "") + '/>';
       case TYPE.TRACK:
         if (!o.points || !o.points.length) return "";
         return '<path d="' + polylineD(mapPoints(o.points)) +
@@ -545,6 +939,9 @@ var Lay6Render = (function () {
     renderToCanvas: renderToCanvas,
     renderToSVG: renderToSVG,
     buildRenderList: buildRenderList,
+    buildNets: buildNets,
+    highlightObject: highlightObject,
+    hitTest: hitTest,
     mm: mm,
   };
 })();

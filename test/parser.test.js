@@ -42,7 +42,7 @@ test("simple fixture: board dimensions and header fields", () => {
   assert.equal(b.name, "demo board");
   assert.equal(Lay6.toMM(b.sizeX), 50);
   assert.equal(Lay6.toMM(b.sizeY), 30);
-  assert.equal(b.grid, 1.27);
+  assert.equal(b.grid, 1270); // stored in micrometres (1.27 mm)
   assert.equal(b.activeLayer, 1);
   // layer_visible[7] must survive the parse (bug 6)
   assert.deepEqual(b.layerVisible, [true, true, true, false, false, false, true]);
