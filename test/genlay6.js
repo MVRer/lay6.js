@@ -171,7 +171,7 @@ function writeBoard(w, b) {
   w.u32(b.sizeX); // 0x23
   w.u32(b.sizeY); // 0x27
   w.bytes(b.groundPane || [0, 0, 0, 0, 0, 0, 0]); // 0x2B
-  w.f64(b.grid != null ? b.grid : 1.27); // 0x32
+  w.f64(b.grid != null ? b.grid : 1270); // 0x32, micrometres
   w.f64(b.zoom != null ? b.zoom : 1.0); // 0x3A
   w.u32(b.viewportOffsetX || 0); // 0x42
   w.u32(b.viewportOffsetY || 0); // 0x46
@@ -226,7 +226,8 @@ function demoBoard() {
     name: "demo board",
     sizeX: 50 * mm,
     sizeY: 30 * mm,
-    grid: 1.27,
+    grid: 1270, // micrometres = 1.27 mm
+
     zoom: 1,
     activeLayer: 1,
     layerVisible: [1, 1, 1, 0, 0, 0, 1], // S2, I1, I2 hidden on load

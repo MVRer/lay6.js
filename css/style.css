@@ -392,6 +392,37 @@ main {
   border-color: var(--warn);
 }
 
+#banner.info {
+  border-color: var(--accent);
+}
+
+#st-hover {
+  color: #ffd76a;
+}
+
+#tooltip {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  pointer-events: none;
+  background: rgb(19 21 25 / 0.95);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.4);
+}
+
+#tooltip .t-title {
+  color: var(--text);
+  font-weight: 550;
+}
+
+#tooltip .t-sub {
+  color: #ffd76a;
+  margin-top: 2px;
+}
+
 #banner .msg {
   flex: 1;
   overflow-wrap: anywhere;

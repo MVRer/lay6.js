@@ -17,6 +17,11 @@
     banner: document.getElementById("banner"),
     bannerMsg: document.querySelector("#banner .msg"),
     stCoords: document.getElementById("st-coords"),
+    stHover: document.getElementById("st-hover"),
+    tooltip: document.getElementById("tooltip"),
+    ttTitle: document.querySelector("#tooltip .t-title"),
+    ttSub: document.querySelector("#tooltip .t-sub"),
+    selection: document.getElementById("selection"),
     stZoom: document.getElementById("st-zoom"),
     stSize: document.getElementById("st-size"),
     stMeasure: document.getElementById("st-measure"),
@@ -31,8 +36,43 @@
     measureMode: false,
     measureA: null, // {x, y} in mm
     measureB: null,
+    hover: null, // { o, members, labels } for the object under the cursor
+    selected: null, // same shape, pinned by click
     nextId: 1,
   };
+
+  var NET_HIGHLIGHT_CAP = 400;
+
+  // Net context for an object: all electrically connected copper plus any
+  // silkscreen labels sitting next to the net.
+  function netInfoFor(board, o) {
+    if (!o) return null;
+    var conductive = (o.type === 2 || o.type === 6 || o.type === 8) &&
+      Lay6.COPPER_LAYERS[o.layer];
+    if (!conductive) return { o: o, members: [o], labels: [] };
+    var nets = Lay6Render.buildNets(board);
+    return {
+      o: o,
+      members: nets.members[o._netRoot] || [o],
+      labels: nets.labels[o._netRoot] || [],
+    };
+  }
+
+  function summarizeNet(info) {
+    if (!info || info.members.length <= 1) return "";
+    var tracks = 0, pads = 0, layers = {};
+    info.members.forEach(function (m) {
+      if (m.type === 6) tracks++;
+      else pads++;
+      layers[Lay6.LAYERS[m.layer] ? Lay6.LAYERS[m.layer].key : m.layer] = true;
+    });
+    var parts = [];
+    if (tracks) parts.push(tracks + " track" + (tracks > 1 ? "s" : ""));
+    if (pads) parts.push(pads + " pad" + (pads > 1 ? "s" : ""));
+    var s = "Net: " + parts.join(", ") + " on " + Object.keys(layers).join("+");
+    if (info.labels.length) s += " — " + info.labels.slice(0, 4).join(", ");
+    return s;
+  }
 
   function activeTab() {
     return state.active >= 0 ? state.tabs[state.active] : null;
@@ -43,6 +83,7 @@
   function showBanner(message, kind) {
     els.banner.hidden = false;
     els.banner.classList.toggle("warn", kind === "warn");
+    els.banner.classList.toggle("info", kind === "info");
     els.bannerMsg.textContent = message;
   }
   document.getElementById("banner-close").addEventListener("click", function () {
@@ -99,7 +140,31 @@
     activateTab(firstNew + Math.min(doc.trailer.activeTab || 0, doc.boards.length - 1));
   }
 
-  var DEMO_B64 = "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";
+  var DEMO_B64 = "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";
+
+  // Boards drawn for the copper-side view store their glyph strokes
+  // right-to-left. Detect that and mirror the view by default so text is
+  // readable immediately; X flips back to the raw orientation.
+  function looksMirrored(board) {
+    if (board._mirrorDet !== undefined) return board._mirrorDet;
+    var rev = 0, fwd = 0;
+    function centroidX(o) {
+      if (!o.points || !o.points.length) return null;
+      var s = 0;
+      for (var i = 0; i < o.points.length; i++) s += o.points[i].x;
+      return s / o.points.length;
+    }
+    Lay6.walkObjects(board.objects, function (o) {
+      if (o.type !== 7 || !o.children || o.children.length < 2) return;
+      var first = centroidX(o.children[0]);
+      var last = centroidX(o.children[o.children.length - 1]);
+      if (first === null || last === null || first === last) return;
+      if (first > last) rev++;
+      else fwd++;
+    });
+    board._mirrorDet = rev >= 2 && rev > fwd * 2;
+    return board._mirrorDet;
+  }
 
   function loadDemo() {
     var bin = atob(DEMO_B64);
@@ -163,8 +228,19 @@
     state.active = Math.max(0, Math.min(i, state.tabs.length - 1));
     if (!state.tabs.length) state.active = -1;
     clearMeasure();
+    state.hover = null;
+    state.selected = null;
     var tab = activeTab();
-    if (tab && !tab.view) fitView(tab);
+    if (tab && !tab.view) {
+      fitView(tab);
+      if (looksMirrored(tab.board)) {
+        tab.view.mirror = true;
+        fitView(tab);
+        showBanner("This board is drawn as seen from the copper side, so its text is stored " +
+          "mirrored. Mirrored view is enabled to make it readable — press X for the raw orientation.",
+          "info");
+      }
+    }
     refreshSidebar();
     requestRender();
   }
@@ -182,8 +258,14 @@
     renderTabs();
     renderLayerPanel();
     renderInfo();
+    renderSelection();
     renderDiagnostics();
     els.empty.hidden = !!activeTab();
+    var tab = activeTab();
+    document.getElementById("btn-mirror").setAttribute("aria-pressed",
+      String(!!(tab && tab.view && tab.view.mirror)));
+    document.getElementById("btn-grid").setAttribute("aria-pressed",
+      String(!!(tab && tab.view && tab.view.grid !== false)));
     updateStatus(null);
   }
 
@@ -245,7 +327,8 @@
     }
     row("File", tab.fileName);
     row("Size", Lay6.toMM(b.sizeX).toFixed(2) + " × " + Lay6.toMM(b.sizeY).toFixed(2) + " mm");
-    row("Grid", b.grid.toFixed(4) + " mm");
+    // the grid field is stored in micrometres (e.g. 396.875 um = 1/64 inch)
+    row("Grid", (b.grid / 1000).toFixed(4) + " mm");
     row("Objects", String(total));
     Object.keys(h).sort().forEach(function (k) {
       row("• " + k, String(h[k]));
@@ -254,6 +337,66 @@
     if (tab.doc.trailer.author) row("Author", tab.doc.trailer.author);
     els.info.innerHTML = "";
     els.info.appendChild(dl);
+  }
+
+  function renderSelection() {
+    var el = els.selection;
+    if (!el) return;
+    var info = state.selected;
+    if (!info) {
+      el.innerHTML = '<span class="muted">Click an object to inspect it.</span>';
+      return;
+    }
+    var o = info.o;
+    var tab = activeTab();
+    var H = tab ? Lay6.toMM(tab.board.sizeY) : 0;
+    var mmv = Lay6.toMM;
+    var dl = document.createElement("dl");
+    function row(dt, dd) {
+      var t = document.createElement("dt");
+      t.textContent = dt;
+      var d = document.createElement("dd");
+      d.textContent = dd;
+      dl.appendChild(t);
+      dl.appendChild(d);
+    }
+    var layer = Lay6.LAYERS[o.layer];
+    row("Object", Lay6.TYPE_NAMES[o.type] || "type " + o.type);
+    row("Layer", layer ? layer.key + " " + layer.name : String(o.layer));
+    var cx = mmv(o.x), cy = mmv(o.y) + H;
+    if (o.type === 8 && o.points && o.points.length >= 3) {
+      var sx = 0, sy = 0;
+      o.points.forEach(function (p) { sx += mmv(p.x); sy += mmv(p.y); });
+      cx = sx / o.points.length;
+      cy = sy / o.points.length + H;
+    }
+    row("Position", cx.toFixed(3) + ", " + cy.toFixed(3) + " mm");
+    if (o.type === 6) row("Width", mmv(o.lineWidth).toFixed(3) + " mm");
+    if (o.type === 2) {
+      row("Pad", (2 * mmv(o.out)).toFixed(2) + " mm " +
+        (o.thtShape === 3 ? "square" : o.thtShape === 2 ? "octagon" : "round"));
+      row("Drill", (2 * mmv(o.in)).toFixed(2) + " mm");
+      row("Plated", o.plated ? "yes" : "no");
+    }
+    if (o.type === 8) row("Size", mmv(o.out).toFixed(2) + " x " + mmv(o.in).toFixed(2) + " mm");
+    if (o.type === 4) row("Fill", o.fill ? "filled" : "outline only");
+    if (o.type === 5) {
+      row("Radii", mmv(o.out).toFixed(2) + " .. " + mmv(o.in).toFixed(2) + " mm");
+      if (o.startAngle !== o.lineWidth) {
+        row("Arc", Lay6.toDeg(o.startAngle).toFixed(1) + " to " + Lay6.toDeg(o.lineWidth).toFixed(1) + " deg");
+      }
+    }
+    if (o.rotation) row("Rotation", Lay6.toDeg(o.rotation).toFixed(1) + " deg");
+    if (o.type === 6 && o.points) row("Segments", String(o.points.length - 1));
+    if (info.members.length > 1) {
+      var tracks = 0, pads = 0;
+      info.members.forEach(function (m) { m.type === 6 ? tracks++ : pads++; });
+      row("Net", tracks + " tracks, " + pads + " pads");
+      if (info.labels.length) row("Net labels", info.labels.slice(0, 6).join(", "));
+    }
+    if (o.groundDistance) row("Clearance", mmv(o.groundDistance).toFixed(2) + " mm");
+    el.innerHTML = "";
+    el.appendChild(dl);
   }
 
   function renderDiagnostics() {
@@ -292,11 +435,13 @@
     var scale = Math.min((s.w - 2 * margin) / bw, (s.h - 2 * margin) / bh);
     if (!isFinite(scale) || scale <= 0) scale = 5;
     var mirror = tab.view ? tab.view.mirror : false;
+    var grid = tab.view ? tab.view.grid !== false : true;
     tab.view = {
       scale: scale,
       tx: (s.w - scale * bw * (mirror ? -1 : 1)) / 2 - (mirror ? scale * bw : 0),
       ty: (s.h - scale * bh) / 2,
       mirror: mirror,
+      grid: grid,
     };
     // center regardless of mirror: screen x of board center must be s.w/2
     var cx = bw / 2;
@@ -329,6 +474,7 @@
     v.tx = px - (px - v.tx) * factor;
     v.ty = py - (py - v.ty) * factor;
     v.scale = next;
+    v.touched = true;
     requestRender();
   }
 
@@ -368,8 +514,22 @@
     var v = tab.view;
     Lay6Render.renderToCanvas(canvas, tab.board, {
       scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, dpr: dpr,
+      grid: v.grid !== false,
     }, tab.visible);
-    if (!skipOverlay) drawMeasureOverlay(dpr);
+    if (!skipOverlay) {
+      var hv = { scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, dpr: dpr };
+      [state.selected, state.hover].forEach(function (info, idx) {
+        if (!info) return;
+        if (idx === 1 && state.selected && info.o === state.selected.o) return;
+        if (info.members.length <= NET_HIGHLIGHT_CAP) {
+          info.members.forEach(function (m) {
+            if (m !== info.o) Lay6Render.highlightObject(ctx, tab.board, m, hv, true);
+          });
+        }
+        Lay6Render.highlightObject(ctx, tab.board, info.o, hv, false);
+      });
+      drawMeasureOverlay(dpr);
+    }
     updateStatus();
   }
 
@@ -448,10 +608,55 @@
     }
   });
 
+  function describeObject(o) {
+    var layer = Lay6.LAYERS[o.layer] ? Lay6.LAYERS[o.layer].key : "?";
+    var name = Lay6.TYPE_NAMES[o.type] || ("type " + o.type);
+    var mmv = Lay6.toMM;
+    var detail = "";
+    if (o.type === 6) detail = mmv(o.lineWidth).toFixed(2) + " mm wide";
+    else if (o.type === 2) detail = "dia " + (2 * mmv(o.out)).toFixed(2) + " mm, drill " + (2 * mmv(o.in)).toFixed(2) + " mm";
+    else if (o.type === 8) detail = mmv(o.out).toFixed(2) + " x " + mmv(o.in).toFixed(2) + " mm";
+    else if (o.type === 4) detail = o.fill ? "filled" : "outline";
+    else if (o.type === 5) detail = "r " + mmv(o.out).toFixed(2) + ".." + mmv(o.in).toFixed(2) + " mm";
+    return layer + " " + name + (detail ? " — " + detail : "");
+  }
+
+  function updateHover(px, py) {
+    var tab = activeTab();
+    var obj = null;
+    if (tab && tab.view && !drag && !pinch) {
+      var w = screenToMM(px, py);
+      if (w) {
+        var H = Lay6.toMM(tab.board.sizeY);
+        obj = Lay6Render.hitTest(tab.board, w.x, w.y - H, 4 / tab.view.scale, tab.visible);
+      }
+    }
+    if ((state.hover ? state.hover.o : null) !== obj) {
+      state.hover = obj ? netInfoFor(tab.board, obj) : null;
+      requestRender();
+    }
+    var info = state.hover;
+    els.stHover.textContent = info ? describeObject(info.o) : "";
+    if (info) {
+      els.ttTitle.textContent = describeObject(info.o);
+      var sub = summarizeNet(info);
+      els.ttSub.textContent = sub;
+      els.ttSub.hidden = !sub;
+      els.tooltip.hidden = false;
+      var maxX = canvas.clientWidth - 270;
+      els.tooltip.style.left = Math.min(px + 14, Math.max(maxX, 8)) + "px";
+      els.tooltip.style.top = (py + 16) + "px";
+    } else {
+      els.tooltip.hidden = true;
+    }
+    canvas.style.cursor = state.measureMode ? "cell" : (info ? "pointer" : "crosshair");
+  }
+
   canvas.addEventListener("pointermove", function (e) {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
     var tab = activeTab();
     updateStatus(screenToMM(e.offsetX, e.offsetY));
+    updateHover(e.offsetX, e.offsetY);
     if (!tab || !tab.view) return;
     if (pinch && pointers.size === 2) {
       var pts = Array.from(pointers.values());
@@ -472,6 +677,7 @@
       if (drag.moved) {
         tab.view.tx = drag.tx + dx;
         tab.view.ty = drag.ty + dy;
+        tab.view.touched = true;
         requestRender();
       }
     }
@@ -480,16 +686,29 @@
   function endPointer(e) {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
-    if (drag && !drag.moved && state.measureMode) {
-      var p = screenToMM(e.offsetX, e.offsetY);
-      if (p) {
-        if (!state.measureA || (state.measureA && state.measureB)) {
-          state.measureA = p;
-          state.measureB = null;
-        } else {
-          state.measureB = p;
+    if (drag && !drag.moved) {
+      if (state.measureMode) {
+        var p = screenToMM(e.offsetX, e.offsetY);
+        if (p) {
+          if (!state.measureA || (state.measureA && state.measureB)) {
+            state.measureA = p;
+            state.measureB = null;
+          } else {
+            state.measureB = p;
+          }
+          requestRender();
         }
-        requestRender();
+      } else {
+        // click selects the object (and its net) for the inspector
+        var tab = activeTab();
+        if (tab && tab.view) {
+          var w = screenToMM(e.offsetX, e.offsetY);
+          var H = Lay6.toMM(tab.board.sizeY);
+          var obj = w && Lay6Render.hitTest(tab.board, w.x, w.y - H, 4 / tab.view.scale, tab.visible);
+          state.selected = obj ? netInfoFor(tab.board, obj) : null;
+          renderSelection();
+          requestRender();
+        }
       }
     }
     if (pointers.size === 0) drag = null;
@@ -498,6 +717,11 @@
   canvas.addEventListener("pointercancel", endPointer);
   canvas.addEventListener("pointerleave", function () {
     updateStatus(null);
+    if (state.hover) {
+      state.hover = null;
+      requestRender();
+    }
+    els.stHover.textContent = "";
   });
 
   canvas.addEventListener("wheel", function (e) {
@@ -536,14 +760,19 @@
       case "-": case "_":
         zoomAt(s.w / 2, s.h / 2, 0.8);
         break;
-      case "ArrowLeft": if (tab && tab.view) { tab.view.tx += 40; requestRender(); } break;
-      case "ArrowRight": if (tab && tab.view) { tab.view.tx -= 40; requestRender(); } break;
-      case "ArrowUp": if (tab && tab.view) { tab.view.ty += 40; requestRender(); } break;
-      case "ArrowDown": if (tab && tab.view) { tab.view.ty -= 40; requestRender(); } break;
+      case "ArrowLeft": if (tab && tab.view) { tab.view.tx += 40; tab.view.touched = true; requestRender(); } break;
+      case "ArrowRight": if (tab && tab.view) { tab.view.tx -= 40; tab.view.touched = true; requestRender(); } break;
+      case "ArrowUp": if (tab && tab.view) { tab.view.ty += 40; tab.view.touched = true; requestRender(); } break;
+      case "ArrowDown": if (tab && tab.view) { tab.view.ty -= 40; tab.view.touched = true; requestRender(); } break;
       case "Escape":
         clearMeasure();
         setMeasureMode(false);
+        state.selected = null;
+        renderSelection();
         requestRender();
+        break;
+      case "g": case "G":
+        toggleGrid();
         break;
       default:
         if (/^[1-7]$/.test(e.key) && tab) {
@@ -584,6 +813,23 @@
     requestRender();
   }
   document.getElementById("btn-mirror").addEventListener("click", toggleMirror);
+
+  function toggleGrid() {
+    var tab = activeTab();
+    if (!tab || !tab.view) return;
+    tab.view.grid = tab.view.grid === false;
+    document.getElementById("btn-grid").setAttribute("aria-pressed", String(tab.view.grid !== false));
+    requestRender();
+  }
+  document.getElementById("btn-grid").addEventListener("click", toggleGrid);
+  document.getElementById("btn-zoom-in").addEventListener("click", function () {
+    var s = cssSize();
+    zoomAt(s.w / 2, s.h / 2, 1.25);
+  });
+  document.getElementById("btn-zoom-out").addEventListener("click", function () {
+    var s = cssSize();
+    zoomAt(s.w / 2, s.h / 2, 0.8);
+  });
 
   function setMeasureMode(on) {
     state.measureMode = on;
@@ -639,7 +885,13 @@
     var enc = els.encoding.value;
     var docs = new Set();
     state.tabs.forEach(function (t) { docs.add(t.doc); });
-    docs.forEach(function (d) { Lay6.decodeStrings(d, enc); });
+    docs.forEach(function (d) {
+      Lay6.decodeStrings(d, enc);
+      // net labels cache decoded strings, so rebuild on demand
+      d.boards.forEach(function (b) { delete b._nets; });
+    });
+    state.hover = null;
+    state.selected = null;
     refreshSidebar();
     requestRender();
   });
@@ -671,12 +923,17 @@
 
   /* ----------------------------- boot -------------------------------- */
 
-  if (typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(function () {
-      requestRender();
-    }).observe(canvas);
+  // Keep the board centered on layout changes until the user starts
+  // navigating on their own.
+  function onViewportResize() {
+    var tab = activeTab();
+    if (tab && tab.view && !tab.view.touched) fitView(tab);
+    requestRender();
   }
-  window.addEventListener("resize", requestRender);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(onViewportResize).observe(canvas);
+  }
+  window.addEventListener("resize", onViewportResize);
 
   // Offline support on the hosted page; skipped on file:// where service
   // workers are unavailable.

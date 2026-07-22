@@ -29,6 +29,12 @@ Sprint-Layout 6). Open the page, drop a file, look at your board.
 - Arcs and annular rings rendered from their true start/end angles
 - Pad, SMD and text rotation
 - Live cursor position in mm and a two-click measuring tool
+- Hover any track or pad to highlight its entire connected net, with a
+  tooltip naming nearby silkscreen labels; click to pin it in the
+  Selection inspector (position, size, drill, rotation, net, clearance)
+- Boards drawn from the copper side (mirrored text) are detected and
+  opened in the readable mirrored view automatically
+- Adaptive millimetre grid overlay (toggle with G)
 - Export the current view to PNG or SVG
 - Text encoding selector (CP1252 / CP1251 / CP1250) that re-decodes names and
   labels instantly, without reparsing the file
@@ -53,8 +59,15 @@ Documented assumptions where the format research is ambiguous:
 - text objects carry their glyph strokes as child track objects; the
   string itself is only drawn (approximated with a browser font) when a
   text object has no children
+- an SMD pad's corner polygon (its point list) is authoritative for its
+  position and shape; the record's x/y anchor is frequently stale in
+  real files and is only used when no points are present
+- the board grid field is stored in micrometres
 - connection blocks follow the board's objects, one per THT/SMD pad in
   document order, including pads inside components
+- net highlighting is computed geometrically (touching copper on the same
+  layer, through-hole pads bridging layers); it approximates connectivity
+  for reading, not for electrical verification
 
 Note: designs made for the classic single-sided toner-transfer workflow are
 often drawn as seen from the copper side, so their text appears mirrored.
