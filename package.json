@@ -1,0 +1,11 @@
+{
+  "name": "lay6.js",
+  "version": "1.0.0",
+  "description": "Unofficial, browser-only viewer for Sprint-Layout 6 (.lay6) PCB files. No backend, no dependencies.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "fixtures": "node test/make-fixtures.js"
+  }
+}
