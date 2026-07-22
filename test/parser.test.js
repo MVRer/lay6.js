@@ -87,6 +87,8 @@ test("simple fixture: rotation, thermal, cutoff and fill flags survive", () => {
   assert.equal(squarePad.cutoff, true);
   const roundPad = b.objects.find((o) => o.type === 2 && o.thtShape === 1);
   assert.equal(roundPad.thermal, true);
+  // y is stored negated in the file (board content spans -size_y..0)
+  assert.equal(Lay6.toMM(roundPad.y), -8);
   assert.equal(Lay6.toMM(roundPad.groundDistance), 0.4);
   const zones = b.objects.filter((o) => o.type === 4);
   assert.deepEqual(zones.map((z) => z.fill), [true, false]);

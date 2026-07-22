@@ -97,7 +97,10 @@ function writeObjectRecord(w, o) {
   var dv = new DataView(rec.buffer);
   dv.setUint8(0x00, o.type);
   dv.setFloat32(0x01, o.x || 0, true);
-  dv.setFloat32(0x05, o.y || 0, true);
+  // The format stores y downward from the board's bottom-left origin, so
+  // board content spans -size_y..0. Object specs here use positive mm
+  // measured up from the bottom edge; the writer flips the sign.
+  dv.setFloat32(0x05, -(o.y || 0), true);
   dv.setFloat32(0x09, o.out || 0, true);
   dv.setFloat32(0x0d, o.in || 0, true);
   dv.setUint32(0x11, o.lineWidth || 0, true);
@@ -146,7 +149,7 @@ function writeObject(w, o, isChild) {
     w.u32(points.length);
     for (var p = 0; p < points.length; p++) {
       w.f32(points[p].x);
-      w.f32(points[p].y);
+      w.f32(-points[p].y);
     }
   }
 }
