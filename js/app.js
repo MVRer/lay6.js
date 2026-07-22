@@ -810,6 +810,9 @@
       case "g": case "G":
         toggleGrid();
         break;
+      case "t": case "T":
+        toggleTheme();
+        break;
       default:
         if (/^[1-7]$/.test(e.key) && tab) {
           var layer = +e.key;
@@ -894,6 +897,23 @@
     requestRender();
   }
   document.getElementById("btn-grid").addEventListener("click", toggleGrid);
+
+  function applyTheme(name) {
+    var t = Lay6Render.setTheme(name);
+    try { localStorage.setItem("lay6-theme", t); } catch (e) { /* private mode */ }
+    var btn = document.getElementById("btn-theme");
+    if (btn) {
+      // The button shows the theme you'd switch TO.
+      btn.textContent = t === "light" ? "Dark" : "Light";
+      btn.setAttribute("aria-pressed", String(t === "light"));
+    }
+    renderLayerPanel(); // swatches read the active palette
+    requestRender();
+  }
+  function toggleTheme() {
+    applyTheme(Lay6Render.getTheme() === "light" ? "dark" : "light");
+  }
+  document.getElementById("btn-theme").addEventListener("click", toggleTheme);
   document.getElementById("btn-zoom-in").addEventListener("click", function () {
     var s = cssSize();
     zoomAt(s.w / 2, s.h / 2, 1.25);
@@ -1012,6 +1032,11 @@
   if ("serviceWorker" in navigator && location.protocol === "https:") {
     navigator.serviceWorker.register("sw.js").catch(function () { /* optional */ });
   }
+
+  // Restore the saved board theme (default dark).
+  var savedTheme = "dark";
+  try { savedTheme = localStorage.getItem("lay6-theme") || "dark"; } catch (e) { /* private mode */ }
+  applyTheme(savedTheme);
 
   refreshSidebar();
   requestRender();

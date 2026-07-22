@@ -13,33 +13,64 @@
 var Lay6Render = (function () {
   var TYPE = { THT: 2, ZONE: 4, CIRCLE: 5, TRACK: 6, TEXT: 7, SMD: 8 };
 
-  var COLORS = {
-    bg: "#0e1013",
-    board: "#161a20",
-    hole: "#0b0d10",
-    dimOutside: "rgba(14, 16, 19, 0.62)",
-    measure: "#e2688b",
-    // Bright colour used for traces, pads, arcs and outlines — the objects
-    // that must stand out.
-    layers: {
-      1: "#5b9bff", // C1 copper top
-      2: "#e6eaf0", // S1 silk top
-      3: "#4bbd82", // C2 copper bottom
-      4: "#c9ba6e", // S2 silk bottom
-      5: "#e0824a", // I1
-      6: "#b878cc", // I2
-      7: "#e6bd4a", // O outline
+  // Two palettes. Dark is the default; light mimics Sprint-Layout's own
+  // white-ish board view. In light mode silkscreen becomes dark grey (never
+  // white, which would vanish) and copper is more saturated. The casing/edge
+  // colour is always a dark shade of the layer colour, so on a light board it
+  // shows around every conductor, not just between touching ones.
+  var THEMES = {
+    dark: {
+      bg: "#0e1013",
+      board: "#161a20",
+      hole: "#0b0d10",
+      dimOutside: "rgba(14, 16, 19, 0.62)",
+      measure: "#e2688b",
+      // Bright colour used for traces, pads, arcs and outlines.
+      layers: {
+        1: "#5b9bff", 2: "#e6eaf0", 3: "#4bbd82", 4: "#c9ba6e",
+        5: "#e0824a", 6: "#b878cc", 7: "#e6bd4a",
+      },
+      // Muted copper-pour wash drawn under the bright objects.
+      pour: { 1: "#254a80", 3: "#1f5a42", 5: "#6e4127", 6: "#5a3d66" },
+      // Hover / selection highlight.
+      hl: { fill: "rgba(255,214,106,0.40)", stroke: "#ffd76a",
+            fillSoft: "rgba(255,214,106,0.18)", strokeSoft: "rgba(255,214,106,0.60)" },
     },
-    // Muted copper-pour colour, drawn UNDER the bright objects so a filled
-    // zone reads as a background wash and the tracks/pads on it stay legible.
-    // Only copper layers can carry filled zones.
-    pour: {
-      1: "#254a80", // C1 pour
-      3: "#1f5a42", // C2 pour
-      5: "#6e4127", // I1 pour
-      6: "#5a3d66", // I2 pour
+    light: {
+      bg: "#e7e8e3",
+      board: "#f4f5f1",
+      hole: "#b6bab0",
+      dimOutside: "rgba(231, 232, 227, 0.60)",
+      measure: "#c62b57",
+      layers: {
+        1: "#1d63d6", // C1 copper top   — strong blue
+        2: "#566072", // S1 silk top     — slate grey (not white!)
+        3: "#128a4a", // C2 copper bottom— strong green
+        4: "#7d6f28", // S2 silk bottom  — dark gold
+        5: "#c2551a", // I1              — burnt orange
+        6: "#883aad", // I2              — purple
+        7: "#a9760c", // O outline       — amber
+      },
+      pour: { 1: "#c3d5f2", 3: "#c2e6d1", 5: "#ecd6c2", 6: "#e2d0ec" },
+      hl: { fill: "rgba(214,51,108,0.28)", stroke: "#c2255c",
+            fillSoft: "rgba(214,51,108,0.14)", strokeSoft: "rgba(214,51,108,0.55)" },
     },
   };
+
+  // Active palette (mutated in place by setTheme so exported references and
+  // closures keep pointing at the live object).
+  var COLORS = { layers: {}, pour: {}, hl: {} };
+  var activeTheme = "dark";
+  function setTheme(name) {
+    var t = THEMES[name] ? name : "dark";
+    var p = THEMES[t];
+    activeTheme = t;
+    COLORS.bg = p.bg; COLORS.board = p.board; COLORS.hole = p.hole;
+    COLORS.dimOutside = p.dimOutside; COLORS.measure = p.measure;
+    COLORS.layers = p.layers; COLORS.pour = p.pour; COLORS.hl = p.hl;
+    edgeCache = {}; // casing tones depend on the active layer colours
+    return t;
+  }
 
   // The wash colour for a filled zone on a given layer; falls back to a
   // dimmed trace colour when no dedicated pour tone exists.
@@ -813,10 +844,11 @@ var Lay6Render = (function () {
 
   /* -------------------- hover highlight & hit test ------------------- */
 
-  var HL_FILL = "rgba(255, 214, 106, 0.4)";
-  var HL_STROKE = "#ffd76a";
-  var HL_FILL_SOFT = "rgba(255, 214, 106, 0.18)";
-  var HL_STROKE_SOFT = "rgba(255, 214, 106, 0.6)";
+  // Slightly translucent trace-halo colours derived from the themed stroke.
+  function hlTrackColor(soft) {
+    var s = COLORS.hl.stroke;
+    return soft ? mixHex(s, COLORS.bg, 0.45) : mixHex(s, COLORS.bg, 0.2);
+  }
 
   // Draw a halo around one object on top of the finished render.
   // soft = true renders the dimmer style used for other net members.
@@ -830,8 +862,8 @@ var Lay6Render = (function () {
     applyView(ctx, view);
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    var fill = soft ? HL_FILL_SOFT : HL_FILL;
-    var stroke = soft ? HL_STROKE_SOFT : HL_STROKE;
+    var fill = soft ? COLORS.hl.fillSoft : COLORS.hl.fill;
+    var stroke = soft ? COLORS.hl.strokeSoft : COLORS.hl.stroke;
     function outline(d) {
       var p = new Path2D(d);
       ctx.fillStyle = fill;
@@ -854,7 +886,7 @@ var Lay6Render = (function () {
       case TYPE.TRACK:
       default:
         if (o.points && o.points.length) {
-          strokePoly(ctx, o, soft ? "rgba(255, 214, 106, 0.3)" : "rgba(255, 214, 106, 0.55)",
+          strokePoly(ctx, o, hlTrackColor(soft),
             mm(o.lineWidth) + (soft ? 2.5 : 4) / view.scale, false);
           strokePoly(ctx, o, stroke, Math.max(mm(o.lineWidth) * 0.4, 1 / view.scale), false);
         }
@@ -1121,8 +1153,12 @@ var Lay6Render = (function () {
     return parts.join("\n");
   }
 
+  setTheme("dark"); // initialise the active palette
+
   return {
     COLORS: COLORS,
+    setTheme: setTheme,
+    getTheme: function () { return activeTheme; },
     renderToCanvas: renderToCanvas,
     renderToSVG: renderToSVG,
     buildRenderList: buildRenderList,

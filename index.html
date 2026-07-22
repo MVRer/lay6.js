@@ -29,6 +29,7 @@
       <button class="btn" id="btn-zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
       <button class="btn" id="btn-fit" title="Fit board to window (F)">Fit</button>
       <button class="btn" id="btn-grid" title="Toggle the mm grid (G)" aria-pressed="true">Grid</button>
+      <button class="btn" id="btn-theme" title="Toggle light / dark board background (T)">Light</button>
       <button class="btn" id="btn-mirror" title="Mirror the view horizontally (X)" aria-pressed="false">Mirror</button>
       <button class="btn" id="btn-rotate" title="Rotate 90° (R; Shift+R reverses)" aria-pressed="false">Rotate</button>
       <button class="btn" id="btn-measure" title="Measure between two clicks (M)" aria-pressed="false">Measure</button>
@@ -70,6 +71,7 @@
         <tr><td><kbd>R</kbd></td><td>rotate 90&deg;</td></tr>
         <tr><td><kbd>M</kbd></td><td>measure tool</td></tr>
         <tr><td><kbd>G</kbd></td><td>toggle grid</td></tr>
+        <tr><td><kbd>T</kbd></td><td>light / dark</td></tr>
         <tr><td><kbd>+</kbd> <kbd>&minus;</kbd></td><td>zoom</td></tr>
         <tr><td><kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd></td><td>pan</td></tr>
         <tr><td><kbd>1</kbd>&hellip;<kbd>7</kbd></td><td>toggle layer</td></tr>
@@ -88,7 +90,7 @@
       <span class="msg"></span>
       <button class="btn" id="banner-close" aria-label="Dismiss message">&times;</button>
     </div>
-    <canvas id="view" tabindex="0" aria-label="PCB board view. Arrow keys pan; plus and minus zoom; F fits; X mirrors; R rotates 90 degrees; G toggles the grid; M measures; number keys 1 to 7 toggle layers."></canvas>
+    <canvas id="view" tabindex="0" aria-label="PCB board view. Arrow keys pan; plus and minus zoom; F fits; X mirrors; R rotates 90 degrees; G toggles the grid; T toggles light or dark; M measures; number keys 1 to 7 toggle layers."></canvas>
     <div id="tooltip" hidden aria-hidden="true">
       <div class="t-title"></div>
       <div class="t-sub" hidden></div>
