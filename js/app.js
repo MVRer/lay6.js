@@ -106,13 +106,24 @@
   }
 
   function addDocument(buffer, fileName) {
-    var doc;
+    var doc, salvaged = false;
     try {
       doc = Lay6.parse(buffer);
     } catch (e) {
+      // Strict parse failed. Try a best-effort partial parse so a file with
+      // one bad board (or a format quirk this decoder doesn't handle yet)
+      // still shows whatever decoded, with a diagnostic pinpointing the break.
       var msg = e && e.name === "Lay6Error" ? e.message : "Unexpected parser failure: " + e;
-      showBanner("“" + fileName + "”: " + msg);
-      return;
+      try {
+        doc = Lay6.parse(buffer, { partial: true });
+      } catch (e2) {
+        doc = null;
+      }
+      if (!doc || !doc.boards.length) {
+        showBanner("“" + fileName + "”: " + msg);
+        return;
+      }
+      salvaged = true;
     }
     // parse() already decoded with an auto-detected codepage. Honour that
     // (so Cyrillic boards are readable on load), and surface the choice by
@@ -143,7 +154,10 @@
         visible: visible,
       });
     });
-    if (doc.diagnostics.length) {
+    if (salvaged) {
+      showBanner("“" + fileName + "” only partially decoded — showing the " +
+        doc.boards.length + " board(s) that parsed. See Diagnostics for where it broke.", "warn");
+    } else if (doc.diagnostics.length) {
       showBanner("“" + fileName + "” loaded with " + doc.diagnostics.length +
         " warning(s) — see Diagnostics.", "warn");
     }
@@ -282,6 +296,7 @@
       String(!!(tab && tab.view && tab.view.mirror)));
     document.getElementById("btn-grid").setAttribute("aria-pressed",
       String(!!(tab && tab.view && tab.view.grid !== false)));
+    updateRotAria();
     updateStatus(null);
   }
 
@@ -443,42 +458,75 @@
     return { w: canvas.clientWidth, h: canvas.clientHeight };
   }
 
+  function boardWH(tab) {
+    return {
+      W: Lay6.toMM(tab.board.sizeX) || 1,
+      H: Lay6.toMM(tab.board.sizeY) || 1,
+    };
+  }
+
+  // The view transform, in one place so the canvas, SVG, hit-testing and the
+  // measure overlay all agree. A point in "content space" is (fx, fy + H)
+  // where fx/fy are file millimetres (file y runs -H..0). It is scaled (x
+  // sign-flipped when mirrored), rotated by `rot` degrees, then translated by
+  // (tx, ty) — identical to applyView / the SVG transform string.
+  function viewTrig(v) {
+    var a = ((v.rot || 0) * Math.PI) / 180;
+    return { cos: Math.cos(a), sin: Math.sin(a), ux: v.mirror ? -1 : 1 };
+  }
+
+  // content point -> screen pixels, without the (tx, ty) translation.
+  function contentOffset(v, cx, cy) {
+    var t = viewTrig(v);
+    var sx = v.scale * t.ux * cx;
+    var sy = v.scale * cy;
+    return { x: sx * t.cos - sy * t.sin, y: sx * t.sin + sy * t.cos };
+  }
+
+  // Position the board's centre at a given screen pixel by solving for tx/ty.
+  function placeCenter(tab, sx, sy) {
+    var v = tab.view, wh = boardWH(tab);
+    var o = contentOffset(v, wh.W / 2, wh.H / 2);
+    v.tx = sx - o.x;
+    v.ty = sy - o.y;
+  }
+
   function fitView(tab) {
     var s = cssSize();
-    var bw = Lay6.toMM(tab.board.sizeX) || 1;
-    var bh = Lay6.toMM(tab.board.sizeY) || 1;
+    var wh = boardWH(tab);
+    var rot = tab.view ? tab.view.rot || 0 : 0;
+    var swap = rot % 180 !== 0; // 90/270 turn the board sideways
+    var bw = swap ? wh.H : wh.W;
+    var bh = swap ? wh.W : wh.H;
     var margin = 30;
     var scale = Math.min((s.w - 2 * margin) / bw, (s.h - 2 * margin) / bh);
     if (!isFinite(scale) || scale <= 0) scale = 5;
-    var mirror = tab.view ? tab.view.mirror : false;
-    var grid = tab.view ? tab.view.grid !== false : true;
     tab.view = {
       scale: scale,
-      tx: (s.w - scale * bw * (mirror ? -1 : 1)) / 2 - (mirror ? scale * bw : 0),
-      ty: (s.h - scale * bh) / 2,
-      mirror: mirror,
-      grid: grid,
+      tx: 0,
+      ty: 0,
+      mirror: tab.view ? tab.view.mirror : false,
+      rot: rot,
+      grid: tab.view ? tab.view.grid !== false : true,
     };
-    // center regardless of mirror: screen x of board center must be s.w/2
-    var cx = bw / 2;
-    tab.view.tx = s.w / 2 - tab.view.scale * (mirror ? -cx : cx);
+    placeCenter(tab, s.w / 2, s.h / 2);
   }
 
   function screenToMM(px, py) {
     var tab = activeTab();
     if (!tab || !tab.view) return null;
-    var v = tab.view;
-    var x = (px - v.tx) / v.scale;
-    if (v.mirror) x = -x;
-    return { x: x, y: (py - v.ty) / v.scale };
+    var v = tab.view, t = viewTrig(v);
+    var rx = px - v.tx, ry = py - v.ty;
+    // un-rotate, then un-scale back to content space
+    var sx = rx * t.cos + ry * t.sin;
+    var sy = -rx * t.sin + ry * t.cos;
+    return { x: (t.ux * sx) / v.scale, y: sy / v.scale };
   }
 
   function mmToScreen(p) {
     var v = activeTab().view;
-    return {
-      x: v.tx + v.scale * (v.mirror ? -p.x : p.x),
-      y: v.ty + v.scale * p.y,
-    };
+    var o = contentOffset(v, p.x, p.y);
+    return { x: v.tx + o.x, y: v.ty + o.y };
   }
 
   function zoomAt(px, py, factor) {
@@ -529,11 +577,11 @@
     }
     var v = tab.view;
     Lay6Render.renderToCanvas(canvas, tab.board, {
-      scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, dpr: dpr,
+      scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, rot: v.rot || 0, dpr: dpr,
       grid: v.grid !== false,
     }, tab.visible);
     if (!skipOverlay) {
-      var hv = { scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, dpr: dpr };
+      var hv = { scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, rot: v.rot || 0, dpr: dpr };
       [state.selected, state.hover].forEach(function (info, idx) {
         if (!info) return;
         if (idx === 1 && state.selected && info.o === state.selected.o) return;
@@ -767,6 +815,9 @@
       case "x": case "X":
         toggleMirror();
         break;
+      case "r": case "R":
+        rotateView(e.shiftKey ? -90 : 90);
+        break;
       case "m": case "M":
         toggleMeasure();
         break;
@@ -817,22 +868,54 @@
     if (tab) { fitView(tab); requestRender(); }
   });
 
-  function toggleMirror() {
-    var tab = activeTab();
-    if (!tab || !tab.view) return;
-    var v = tab.view;
-    var cx = Lay6.toMM(tab.board.sizeX) / 2;
-    var screenCX = v.tx + v.scale * (v.mirror ? -cx : cx);
-    v.mirror = !v.mirror;
-    v.tx = screenCX - v.scale * (v.mirror ? -cx : cx);
-    document.getElementById("btn-mirror").setAttribute("aria-pressed", String(v.mirror));
-    // Drop any stale hover highlight/tooltip from the pre-mirror geometry.
+  // Drop any hover highlight/tooltip that belonged to the pre-transform
+  // geometry so it never lingers in the wrong place.
+  function clearHoverUI() {
     state.hover = null;
     els.tooltip.hidden = true;
     els.stHover.textContent = "";
+  }
+
+  function toggleMirror() {
+    var tab = activeTab();
+    if (!tab || !tab.view) return;
+    var v = tab.view, wh = boardWH(tab);
+    var sc = mmToScreen({ x: wh.W / 2, y: wh.H / 2 }); // keep centre fixed
+    v.mirror = !v.mirror;
+    placeCenter(tab, sc.x, sc.y);
+    v.touched = true;
+    document.getElementById("btn-mirror").setAttribute("aria-pressed", String(v.mirror));
+    clearHoverUI();
     requestRender();
   }
   document.getElementById("btn-mirror").addEventListener("click", toggleMirror);
+
+  // Rotate the view in 90° steps (delta = +90 CW / -90 CCW), pivoting about
+  // the board centre so it stays put. Fixes boards that come in sideways or
+  // upside down.
+  function rotateView(delta) {
+    var tab = activeTab();
+    if (!tab || !tab.view) return;
+    var v = tab.view, wh = boardWH(tab);
+    var sc = mmToScreen({ x: wh.W / 2, y: wh.H / 2 });
+    v.rot = (((v.rot || 0) + delta) % 360 + 360) % 360;
+    placeCenter(tab, sc.x, sc.y);
+    v.touched = true;
+    updateRotAria();
+    clearHoverUI();
+    requestRender();
+  }
+  function updateRotAria() {
+    var tab = activeTab();
+    var rot = tab && tab.view ? tab.view.rot || 0 : 0;
+    var btn = document.getElementById("btn-rotate");
+    if (btn) {
+      btn.setAttribute("aria-pressed", String(rot !== 0));
+      btn.title = "Rotate 90° (R) — currently " + rot + "°";
+    }
+  }
+  var rotBtn = document.getElementById("btn-rotate");
+  if (rotBtn) rotBtn.addEventListener("click", function () { rotateView(90); });
 
   function toggleGrid() {
     var tab = activeTab();

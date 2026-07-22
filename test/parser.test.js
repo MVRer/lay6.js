@@ -249,6 +249,32 @@ test("absurd point count is rejected with a specific message", () => {
   assert.throws(() => Lay6.parse(buf), /point count/i);
 });
 
+test("partial parse salvages the boards before a corrupt one; strict still throws", () => {
+  const trailer = { activeTab: 0, project: "", author: "", company: "", comment: "" };
+  const board = gen.demoBoard();
+  const fileA = gen.fixtures ? gen.generate({ boards: [board], trailer }) : null;
+  const fileAB = gen.generate({ boards: [board, board], trailer });
+  // trailer bytes: activeTab(4) + 3 fixedStr(1+100) + comment varStr(4+0)
+  const trailerLen = 4 + 3 * (1 + 100) + 4;
+  const boardARegion = fileA.byteLength - 8 - trailerLen;
+  const cut = 8 + boardARegion + 0x100; // partway into board B's header
+
+  const truncated = fileAB.slice(0, cut);
+  assert.throws(() => Lay6.parse(truncated), /Truncated|Implausible/i, "strict mode still throws");
+
+  const doc = Lay6.parse(truncated, { partial: true });
+  assert.equal(doc.boards.length, 1, "board A is salvaged");
+  assert.equal(doc.boards[0].name, "demo board");
+  assert.ok(doc.diagnostics.some((d) => d.level === "error" && /Board 2 of 2/.test(d.message)),
+    "an error diagnostic pinpoints the corrupt board");
+  assert.ok(doc.trailer, "a placeholder trailer is present so the UI does not crash");
+});
+
+test("partial parse still throws on a totally invalid file (nothing to salvage)", () => {
+  assert.throws(() => Lay6.parse(new Uint8Array([0x00, 0x01, 0x02, 0x03]), { partial: true }),
+    /signature/i);
+});
+
 test("trailing garbage surfaces as a diagnostic, not a silent pass", () => {
   const base = fixture("simple.lay6");
   const buf = new Uint8Array(base.byteLength + 16);

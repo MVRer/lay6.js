@@ -287,6 +287,7 @@ var Lay6Render = (function () {
   function applyView(ctx, view) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.translate(view.tx, view.ty);
+    if (view.rot) ctx.rotate((view.rot * Math.PI) / 180);
     ctx.scale(view.mirror ? -view.scale : view.scale, view.scale);
     ctx.translate(0, view.oy || 0);
     viewScale = view.scale || 1;
@@ -480,7 +481,7 @@ var Lay6Render = (function () {
 
     view = {
       scale: view.scale, tx: view.tx, ty: view.ty,
-      mirror: view.mirror, dpr: view.dpr, grid: view.grid,
+      mirror: view.mirror, rot: view.rot || 0, dpr: view.dpr, grid: view.grid,
       oy: mm(board.sizeY),
     };
     applyView(ctx, view);
@@ -741,7 +742,7 @@ var Lay6Render = (function () {
   function highlightObject(ctx, board, o, view, soft) {
     view = {
       scale: view.scale, tx: view.tx, ty: view.ty,
-      mirror: view.mirror, dpr: view.dpr,
+      mirror: view.mirror, rot: view.rot || 0, dpr: view.dpr,
       oy: mm(board.sizeY),
     };
     ctx.save();
@@ -944,7 +945,8 @@ var Lay6Render = (function () {
     parts.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + widthPx + '" height="' + heightPx +
       '" viewBox="0 0 ' + widthPx + " " + heightPx + '">');
     parts.push('<rect width="100%" height="100%" fill="' + COLORS.bg + '"/>');
-    var tf = "translate(" + fmt(view.tx) + " " + fmt(view.ty) + ") scale(" +
+    var tf = "translate(" + fmt(view.tx) + " " + fmt(view.ty) + ")" +
+      (view.rot ? " rotate(" + fmt(view.rot) + ")" : "") + " scale(" +
       fmt(view.mirror ? -view.scale : view.scale) + " " + fmt(view.scale) +
       ") translate(0 " + fmt(mm(board.sizeY)) + ")";
     parts.push('<g transform="' + tf + '">');

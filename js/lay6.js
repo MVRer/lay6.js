@@ -354,7 +354,14 @@ var Lay6 = (function () {
     return board;
   }
 
-  function parse(buffer) {
+  // parse(buffer, { partial: true }) renders what it can: if a board or the
+  // trailer fails to decode, the error is recorded as a diagnostic and the
+  // boards parsed so far are returned, instead of throwing away the whole
+  // file. Strict mode (the default) still throws on the first problem so the
+  // full-consumption guarantee and the specific error messages are intact.
+  function parse(buffer, opts) {
+    opts = opts || {};
+    var partial = !!opts.partial;
     if (buffer instanceof Uint8Array) {
       buffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
     }
@@ -398,20 +405,53 @@ var Lay6 = (function () {
     }
 
     var boards = [];
+    var aborted = false;
     for (var i = 0; i < boardCount; i++) {
-      boards.push(parseBoard(r, i, diagnostics));
+      try {
+        boards.push(parseBoard(r, i, diagnostics));
+      } catch (e) {
+        if (!partial || !(e instanceof Lay6Error)) throw e;
+        // The reader position is lost once a record desyncs, so later boards
+        // can't be located — stop, but keep the boards already decoded.
+        diagnostics.push({
+          level: "error",
+          message: "Board " + (i + 1) + " of " + boardCount + " could not be decoded: " +
+            e.message + " Showing the " + boards.length + " board(s) that parsed cleanly.",
+        });
+        aborted = true;
+        break;
+      }
     }
 
-    var trailer = {
-      activeTab: r.u32("trailer active tab"),
-      projectRaw: r.fixedStr(100, "trailer project name"),
-      authorRaw: r.fixedStr(100, "trailer author"),
-      companyRaw: r.fixedStr(100, "trailer company"),
-      commentRaw: r.varStr("trailer comment"),
-    };
+    var trailer = null;
+    if (!aborted) {
+      try {
+        trailer = {
+          activeTab: r.u32("trailer active tab"),
+          projectRaw: r.fixedStr(100, "trailer project name"),
+          authorRaw: r.fixedStr(100, "trailer author"),
+          companyRaw: r.fixedStr(100, "trailer company"),
+          commentRaw: r.varStr("trailer comment"),
+        };
+      } catch (e) {
+        if (!partial || !(e instanceof Lay6Error)) throw e;
+        diagnostics.push({
+          level: "error",
+          message: "The file trailer could not be decoded: " + e.message,
+        });
+        aborted = true;
+      }
+    }
+    if (!trailer) {
+      trailer = {
+        activeTab: 0, projectRaw: new Uint8Array(0), authorRaw: new Uint8Array(0),
+        companyRaw: new Uint8Array(0), commentRaw: new Uint8Array(0),
+      };
+    }
 
     // Correctness check: a correct parse consumes the file to the last byte.
-    if (r.pos !== r.length) {
+    // (Skipped when a partial parse already aborted with its own diagnostic.)
+    if (!aborted && r.pos !== r.length) {
       diagnostics.push({
         level: "warning",
         message: "Parser consumed " + r.pos + " of " + r.length + " bytes; " +

@@ -55,7 +55,7 @@ of turning into a wall of colour:
 |---|---|
 | 🗂️ **Multi‑board** | Drag‑and‑drop or file picker; multi‑board files open as tabs |
 | 🔍 **Smooth navigation** | Wheel zoom, drag pan, pinch zoom, fit‑to‑board, double‑click to reset |
-| 🪞 **Mirror view** | Flip horizontally to read the bottom side; copper‑side boards auto‑mirror so their text is legible |
+| 🪞 **Mirror & rotate** | Flip horizontally to read the bottom side (copper‑side boards auto‑mirror); rotate in 90° steps to fix boards that load sideways or upside down |
 | 🎨 **Per‑layer control** | Visibility toggles with live object counts; the file's own visibility flags apply on load |
 | 🟫 **Copper zones** | Ground‑distance clearance subtracted around same‑layer pads/tracks, thermal‑relief spokes, cutoff isolation |
 | ⭕ **Arcs & rings** | Annular rings and partial arcs rendered from their true start/end angles |
@@ -65,6 +65,7 @@ of turning into a wall of colour:
 | 🌐 **Encoding aware** | Auto‑detects CP1251 Cyrillic; manual CP1252 / CP1251 / CP1250 override re‑decodes instantly, no reparse |
 | 🖼️ **Export** | Save the current view to PNG or SVG |
 | ⚠️ **Honest errors** | Specific messages for bad signatures, truncation and implausible counts — never a silent blank canvas |
+| 🩹 **Resilient parsing** | If one board (or an unhandled format quirk) fails to decode, the boards that *did* parse still render, with a diagnostic pinpointing exactly where it broke |
 
 ### Keyboard
 
@@ -72,8 +73,9 @@ of turning into a wall of colour:
 |---|---|---|---|---|
 | <kbd>F</kbd> | fit board | | <kbd>+</kbd> / <kbd>−</kbd> | zoom |
 | <kbd>X</kbd> | mirror view | | <kbd>←↑↓→</kbd> | pan |
-| <kbd>M</kbd> | measure tool | | <kbd>1</kbd>…<kbd>7</kbd> | toggle a layer |
-| <kbd>G</kbd> | toggle grid | | <kbd>Esc</kbd> | cancel / deselect |
+| <kbd>R</kbd> | rotate 90° (<kbd>Shift</kbd> reverses) | | <kbd>1</kbd>…<kbd>7</kbd> | toggle a layer |
+| <kbd>M</kbd> | measure tool | | <kbd>G</kbd> | toggle grid |
+| | | | <kbd>Esc</kbd> | cancel / deselect |
 
 ## Correctness
 

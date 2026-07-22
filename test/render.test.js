@@ -120,6 +120,15 @@ test("SVG export: mirrored view flips the x scale", () => {
   assert.match(svg, /scale\(-10 10\)/);
 });
 
+test("SVG export applies a rotation transform when the view is rotated", () => {
+  const board = demoDoc().boards[0];
+  // Check the view's own group transform, not text-element rotations.
+  const plain = Lay6Render.renderToSVG(board, VIEW, 800, 600, ALL_VISIBLE);
+  assert.match(plain, /<g transform="translate\([^)]*\) scale\(/, "no view rotation at rot 0");
+  const rotated = Lay6Render.renderToSVG(board, { scale: 10, tx: 0, ty: 0, mirror: false, rot: 90 }, 800, 600, ALL_VISIBLE);
+  assert.match(rotated, /<g transform="translate\([^)]*\) rotate\(90\) scale\(/, "rotate composes between translate and scale");
+});
+
 test("filled copper zone renders in the muted pour colour, distinct from traces", () => {
   const board = demoDoc().boards[0];
   const svg = Lay6Render.renderToSVG(board, VIEW, 800, 600, ALL_VISIBLE);
