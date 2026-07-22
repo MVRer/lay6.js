@@ -139,7 +139,8 @@ var Lay6Render = (function () {
   // Draw a layer's objects with casing under copper; single pass otherwise.
   function drawLayerObjects(ctx, objs, layer, color) {
     var i;
-    if (Lay6.COPPER_LAYERS[layer]) {
+    // Casing only helps solid copper; skeleton mode is already all thin lines.
+    if (Lay6.COPPER_LAYERS[layer] && !viewThin) {
       var edge = edgeColor(layer), cw = casingWidthMM();
       for (i = 0; i < objs.length; i++) {
         if (objs[i].type !== TYPE.ZONE) drawCasing(ctx, objs[i], edge, cw);
@@ -383,8 +384,12 @@ var Lay6Render = (function () {
   // caller threading them through.
   var viewScale = 1;
   var viewMirror = false;
+  var viewThin = false;  // "skeleton" mode: thin centreline tracks, outlined pads
   var svgMirror = false; // set per renderToSVG call (SVG has no live view state)
+  var svgThin = false;
+  var svgThinMM = 0;     // thin stroke width in mm for the current SVG export
   var MIN_STROKE_PX = 1.1; // thinnest a trace/glyph is allowed to render
+  var THIN_PX = 1.4;       // centreline / outline width in thin mode
 
   // The board's file Y axis points up (origin bottom-left), while the canvas
   // Y axis points down, so the whole scene is drawn with a negated Y scale to
@@ -400,11 +405,24 @@ var Lay6Render = (function () {
     ctx.translate(0, view.oy || 0);
     viewScale = view.scale || 1;
     viewMirror = !!view.mirror;
+    viewThin = !!view.thin;
   }
 
   function fillD(ctx, d, color) {
     ctx.fillStyle = color;
     ctx.fill(new Path2D(d), "evenodd");
+  }
+
+  // Thin outline of a filled shape (used in skeleton mode for pads/arcs/zones).
+  function strokeShape(ctx, d, color) {
+    ctx.strokeStyle = color;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = THIN_PX / viewScale;
+    ctx.stroke(new Path2D(d));
+  }
+  function thinMM() {
+    return THIN_PX / viewScale;
   }
 
   // Keep a line at least MIN_STROKE_PX device pixels wide so hairline copper
@@ -455,27 +473,31 @@ var Lay6Render = (function () {
   function drawObject(ctx, o, color) {
     switch (o.type) {
       case TYPE.THT:
-        fillD(ctx, thtPadD(o, 0), color);
+        if (viewThin) strokeShape(ctx, thtPadD(o, 0), color);
+        else fillD(ctx, thtPadD(o, 0), color);
         break;
       case TYPE.SMD:
-        fillD(ctx, smdPadD(o, 0), color);
+        if (viewThin) strokeShape(ctx, smdPadD(o, 0), color);
+        else fillD(ctx, smdPadD(o, 0), color);
         break;
       case TYPE.CIRCLE:
         var d = circleBandD(o, 0);
-        if (d) fillD(ctx, d, color);
+        if (d) { if (viewThin) strokeShape(ctx, d, color); else fillD(ctx, d, color); }
         break;
       case TYPE.TRACK:
-        strokePoly(ctx, o, color, mm(o.lineWidth), false);
+        // Skeleton mode collapses every trace to a thin centreline so wide
+        // power traces stop reading as blobs.
+        strokePoly(ctx, o, color, viewThin ? thinMM() : mm(o.lineWidth), false);
         break;
       case TYPE.ZONE:
         if (!o.points || o.points.length < 3) break;
-        if (o.fill) {
+        if (o.fill && !viewThin) {
           // Muted wash so tracks/pads on the pour stay readable; a thin
           // bright edge keeps the zone boundary legible.
           fillD(ctx, polygonD(mapPoints(o.points)), pourColor(o.layer));
           strokePoly(ctx, o, color, Math.max(mm(o.lineWidth), 0.05), true);
         } else {
-          strokePoly(ctx, o, color, mm(o.lineWidth), true);
+          strokePoly(ctx, o, color, viewThin ? thinMM() : mm(o.lineWidth), true);
         }
         break;
       case TYPE.TEXT:
@@ -594,6 +616,7 @@ var Lay6Render = (function () {
     view = {
       scale: view.scale, tx: view.tx, ty: view.ty,
       mirror: view.mirror, rot: view.rot || 0, dpr: view.dpr, grid: view.grid,
+      thin: !!view.thin,
       oy: mm(board.sizeY),
     };
     applyView(ctx, view);
@@ -613,7 +636,7 @@ var Lay6Render = (function () {
       var color = COLORS.layers[layer];
       var hasFilledZone = Lay6.COPPER_LAYERS[layer] &&
         objs.some(function (o) { return o.type === TYPE.ZONE && o.fill; });
-      if (hasFilledZone) {
+      if (hasFilledZone && !view.thin) {
         renderLayerWithZones(ctx, objs, layer, color, view, canvas.width, canvas.height);
         applyView(ctx, view); // renderLayerWithZones resets the transform
       } else {
@@ -974,28 +997,39 @@ var Lay6Render = (function () {
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  // thin outline of a shape path for skeleton mode.
+  function svgOutline(d, color) {
+    return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="' +
+      fmt(svgThinMM) + '" stroke-linecap="round" stroke-linejoin="round"/>';
+  }
+
   function svgObject(o, color) {
     switch (o.type) {
       case TYPE.THT:
+        if (svgThin) return svgOutline(thtPadD(o, 0), color);
         return '<path d="' + thtPadD(o, 0) + '" fill="' + color + '" fill-rule="evenodd"/>';
       case TYPE.SMD:
+        if (svgThin) return svgOutline(smdPadD(o, 0), color);
         return '<path d="' + smdPadD(o, 0) + '" fill="' + color + '"/>';
       case TYPE.CIRCLE:
         var d = circleBandD(o, 0);
-        return d ? '<path d="' + d + '" fill="' + color + '" fill-rule="evenodd"/>' : "";
+        if (!d) return "";
+        if (svgThin) return svgOutline(d, color);
+        return '<path d="' + d + '" fill="' + color + '" fill-rule="evenodd"/>';
       case TYPE.TRACK:
         if (!o.points || !o.points.length) return "";
         return '<path d="' + polylineD(mapPoints(o.points)) +
-          '" fill="none" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) +
+          '" fill="none" stroke="' + color + '" stroke-width="' +
+          fmt(svgThin ? svgThinMM : Math.max(mm(o.lineWidth), 0.02)) +
           '" stroke-linecap="round" stroke-linejoin="round"/>';
       case TYPE.ZONE:
         if (!o.points || o.points.length < 3) return "";
         var zd = polygonD(mapPoints(o.points));
-        if (o.fill) return '<path d="' + zd + '" fill="' + pourColor(o.layer) +
+        if (o.fill && !svgThin) return '<path d="' + zd + '" fill="' + pourColor(o.layer) +
           '" stroke="' + color + '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.05)) +
           '" stroke-linejoin="round"/>';
         return '<path d="' + zd + '" fill="none" stroke="' + color +
-          '" stroke-width="' + fmt(Math.max(mm(o.lineWidth), 0.02)) + '" stroke-linejoin="round"/>';
+          '" stroke-width="' + fmt(svgThin ? svgThinMM : Math.max(mm(o.lineWidth), 0.02)) + '" stroke-linejoin="round"/>';
       case TYPE.TEXT:
         if (!textShouldDraw(o)) return "";
         var h = Math.max(mm(o.out), 0.4);
@@ -1075,6 +1109,8 @@ var Lay6Render = (function () {
    */
   function renderToSVG(board, view, widthPx, heightPx, visible) {
     svgMirror = !!view.mirror;
+    svgThin = !!view.thin;
+    svgThinMM = THIN_PX / (view.scale || 1);
     var maskId = 0;
     var parts = [];
     parts.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + widthPx + '" height="' + heightPx +
@@ -1098,7 +1134,7 @@ var Lay6Render = (function () {
       var color = COLORS.layers[layer];
       var zones = [], rest = [];
       for (var i = 0; i < objs.length; i++) (objs[i].type === TYPE.ZONE ? zones : rest).push(objs[i]);
-      var hasFilledZone = Lay6.COPPER_LAYERS[layer] &&
+      var hasFilledZone = Lay6.COPPER_LAYERS[layer] && !view.thin &&
         zones.some(function (o) { return o.fill; });
 
       if (hasFilledZone) {
@@ -1127,7 +1163,7 @@ var Lay6Render = (function () {
         for (i = 0; i < rest.length; i++) parts.push(svgCasing(rest[i], edgeZ, cwZ));
         for (i = 0; i < rest.length; i++) parts.push(svgObject(rest[i], color));
       } else {
-        if (Lay6.COPPER_LAYERS[layer]) {
+        if (Lay6.COPPER_LAYERS[layer] && !view.thin) {
           var edge = edgeColor(layer), cw = casingWidthMM(view.scale);
           for (i = 0; i < objs.length; i++) {
             if (objs[i].type !== TYPE.ZONE) parts.push(svgCasing(objs[i], edge, cw));

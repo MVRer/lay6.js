@@ -263,6 +263,8 @@
       String(!!(tab && tab.view && tab.view.mirror)));
     document.getElementById("btn-grid").setAttribute("aria-pressed",
       String(!!(tab && tab.view && tab.view.grid !== false)));
+    document.getElementById("btn-thin").setAttribute("aria-pressed",
+      String(!!(tab && tab.view && tab.view.thin)));
     updateRotAria();
     updateStatus(null);
   }
@@ -547,7 +549,7 @@
     var v = tab.view;
     Lay6Render.renderToCanvas(canvas, tab.board, {
       scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, rot: v.rot || 0, dpr: dpr,
-      grid: v.grid !== false,
+      grid: v.grid !== false, thin: !!v.thin,
     }, tab.visible);
     if (!skipOverlay) {
       var hv = { scale: v.scale, tx: v.tx, ty: v.ty, mirror: v.mirror, rot: v.rot || 0, dpr: dpr };
@@ -813,6 +815,9 @@
       case "t": case "T":
         toggleTheme();
         break;
+      case "w": case "W":
+        toggleThin();
+        break;
       default:
         if (/^[1-7]$/.test(e.key) && tab) {
           var layer = +e.key;
@@ -897,6 +902,17 @@
     requestRender();
   }
   document.getElementById("btn-grid").addEventListener("click", toggleGrid);
+
+  // Skeleton mode: draw traces as thin centrelines and pads/zones as outlines,
+  // so wide power traces stop reading as blobs and the routing is followable.
+  function toggleThin() {
+    var tab = activeTab();
+    if (!tab || !tab.view) return;
+    tab.view.thin = !tab.view.thin;
+    document.getElementById("btn-thin").setAttribute("aria-pressed", String(!!tab.view.thin));
+    requestRender();
+  }
+  document.getElementById("btn-thin").addEventListener("click", toggleThin);
 
   function applyTheme(name) {
     var t = Lay6Render.setTheme(name);

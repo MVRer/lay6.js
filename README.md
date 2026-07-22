@@ -49,6 +49,9 @@ of turning into a wall of colour:
 - **Dark or light board** (press <kbd>T</kbd>): a light, Sprint-Layout-style
   paper background where the copper outlines read clearly, with silkscreen
   switched to dark so it never disappears. Your choice is remembered.
+- **Thin / skeleton mode** (press <kbd>W</kbd>): collapse every trace to a thin
+  centreline and outline the pads, so wide power traces stop reading as blobs
+  and the routing is easy to follow.
 - **Every layer has its own high‑contrast tone** on a dark canvas — copper,
   silkscreen, inner and outline layers never blur together.
 - **Cyrillic (and other) text is auto‑detected.** A board authored in a Russian
